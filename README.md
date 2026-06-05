@@ -53,6 +53,7 @@ trading_bot/
 │       ├── train_split.csv           # 80% of data for training
 │       └── test_split.csv            # 20% for out-of-sample backtest
 ├── src/
+<<<<<<< HEAD
 │   ├── data_downloader.py            # Download 1-minute FX data from HistData.com
 │   ├── preprocess.py                 # Resample, engineer features, apply triple barrier labels
 │   ├── model.py                      # TemporalFusionTransformer architecture & PricePredictor
@@ -62,6 +63,17 @@ trading_bot/
 │   ├── generate_test_data.py         # Generates synthetic OHLCV data for quick testing
 │   ├── test_suite.py                 # Unit tests for all modules
 │   └── main.py                       # Orchestrates full pipeline
+=======
+│   ├── data_downloader.py            # Phase 1a: Market data download
+│   ├── preprocess.py                 # Phase 1b: Synchronization & feature engineering
+│   ├── model.py                      # Phase 2: LSTM model (Darts-based)
+│   ├── environment.py                # Trading environment simulation
+│   ├── backtest.py                   # Phase 3: Backtesting engine
+│   ├── performance.py                # Metrics calculation and visualization
+│   ├── generate_test_data.py         # Generate synthetic test data for testing
+│   ├── test_suite.py                 # Comprehensive test suite for all modules
+│   └── main.py                       # Orchestration (runs all phases)
+>>>>>>> fb40a6fb41743e93407ad53a20ae1f6c10f668cd
 ├── models/
 │   ├── model.pkl                     # Trained model weights
 │   └── model.scaler.pkl              # Feature StandardScaler for inference
@@ -137,6 +149,23 @@ This will:
 3. **Generate training visualizations** (learning curves, confusion matrix)
 4. **Run out-of-sample backtest** on remaining 20% with dynamic ATR risk management
 5. **Output performance report** with metrics and equity curve plot
+
+### Testing
+
+Run the test suite to validate all modules:
+
+```bash
+cd src
+python test_suite.py
+```
+
+Generate synthetic test data for quick validation:
+
+```bash
+python generate_test_data.py
+```
+
+This creates sample OHLCV data useful for testing without downloading real market data.
 
 ### Expected Output
 
@@ -337,6 +366,7 @@ Calculates out-of-sample metrics:
 
 ### Environment Variables (.env)
 
+<<<<<<< HEAD
 ```env
 # Data Download
 HISTDATA_TICKERS=EURUSD,GBPUSD,USDJPY
@@ -356,6 +386,17 @@ MAIN_ASSET=EURUSD                # Asset with full features + labels
 # Backtesting (via src/backtest.py)
 # - threshold=0.35         (probability threshold for conviction)
 # - risk_percentage=0.2    (for position sizing if needed)
+=======
+Edit `src/data_downloader.py`:
+```python
+TICKERS = {
+    'BTC-USD': 'BTC_USD',
+    'ETH-USD': 'ETH_USD',
+    'EURUSD=X': 'EURUSD',
+    'GBPUSD=X': 'GBPUSD',
+    'GC=F': 'GC_F'
+}
+>>>>>>> fb40a6fb41743e93407ad53a20ae1f6c10f668cd
 ```
 
 ### Customize Model Architecture
@@ -454,6 +495,7 @@ train_score, val_score = model.train(str(train_file), epochs=100, batch_size=32)
 
 | File | Purpose |
 |------|---------|
+<<<<<<< HEAD
 | `data_downloader.py` | Downloads 1-minute OHLCV data from HistData.com |
 | `preprocess.py` | Resamples to target timeframe, engineers features, applies Triple Barrier labels |
 | `model.py` | TemporalFusionTransformer architecture + PricePredictor training/inference |
@@ -463,6 +505,17 @@ train_score, val_score = model.train(str(train_file), epochs=100, batch_size=32)
 | `generate_test_data.py` | Creates synthetic OHLCV data for quick validation |
 | `test_suite.py` | Unit tests for preprocessing, modeling, and backtesting |
 | `main.py` | Orchestrates full pipeline: train → visualize → backtest |
+=======
+| `data_downloader.py` | Downloads hourly OHLCV data from yfinance |
+| `preprocess.py` | Synchronizes assets, engineers features |
+| `model.py` | Darts LSTM model wrapper with train/predict API |
+| `environment.py` | Simulates trading account and position tracking |
+| `backtest.py` | Historical backtesting engine |
+| `performance.py` | Calculates metrics and visualizes results |
+| `generate_test_data.py` | Creates synthetic OHLCV data for testing and validation |
+| `test_suite.py` | Unit tests and integration tests for all modules |
+| `main.py` | Orchestrates all phases end-to-end |
+>>>>>>> fb40a6fb41743e93407ad53a20ae1f6c10f668cd
 
 ## Dependencies
 
