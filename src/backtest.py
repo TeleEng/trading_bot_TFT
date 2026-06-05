@@ -1,0 +1,121 @@
+import pandas as pd
+import numpy as np
+from pathlib import Path
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+MAIN_ASSET = os.getenv("MAIN_ASSET", "EURUSD")
+
+class Backtester:
+    """Run backtest using the Multi-Class model and trading environment."""
+
+    def __init__(self, model, environment, threshold=0.35, risk_percentage=0.2):
+        self.model = model
+        self.environment = environment
+        
+        # 3-class baseline is 0.33. 0.35 threshold ensures slight conviction.
+        self.threshold = threshold 
+        self.risk_percentage = risk_percentage 
+        
+        # FIX: Align Backtester with the Preprocessor's ATR Logic
+        self.tp_mult = 1.5
+        self.sl_mult = 0.75
+
+        self.cooldown_periods = 2 # Reduced cooldown for faster 6h strategy
+        self._cooldown_counter = 0
+
+    def run(self, data_path, asset_price_col='Close'):
+        print(f"Starting Multi-Class Dynamic ATR Backtest on {data_path}...")
+        df = pd.read_csv(data_path, index_col=0, parse_dates=True)
+        ticker = MAIN_ASSET
+
+        if 'target' in df.columns:
+            features_df = df.drop(columns=['target'])
+        else:
+            features_df = df
+
+        results = []
+        self.environment.reset()
+        self._cooldown_counter = 0
+        
+        seq_len = self.model.input_chunk_length
+        current_sl_threshold = 0.0
+
+        for i in range(seq_len, len(df)):
+            current_row = df.iloc[i]
+            current_timestamp = df.index[i]
+            price = current_row[asset_price_col]
+            
+            # Extract ATR for dynamic logic (fallback to 0.5% move if missing)
+            atr = current_row.get('ATR', price * 0.005) 
+            
+            self.environment.update_portfolio_value({ticker: price})
+            port_value = self.environment.portfolio_value
+            current_pos = self.environment.positions.get(ticker, 0.0)
+            entry_price = self.environment.entry_prices.get(ticker, 0.0)
+
+            if self._cooldown_counter > 0:
+                self._cooldown_counter -= 1
+
+            # Reset dynamic Stop Loss if flat
+            if current_pos == 0:
+                current_sl_threshold = -((self.sl_mult * atr) / price)
+
+            # 1. Evaluate Dynamic ATR Risk Management
+            closed_due_to_risk = False
+            if current_pos != 0 and entry_price > 0:
+                
+                # Convert the ATR dollar move into a percentage for the trailing math
+                tp_pct = (self.tp_mult * atr) / entry_price
+                base_sl_pct = -((self.sl_mult * atr) / entry_price)
+                
+                unrealized_return = (price - entry_price) / entry_price if current_pos > 0 else (entry_price - price) / entry_price
+                
+                # Rule 2: Break-even Plus
+                if unrealized_return >= 0.70 * tp_pct:
+                    locked_in_profit = 0.50 * tp_pct
+                    if locked_in_profit > current_sl_threshold:
+                        current_sl_threshold = locked_in_profit
+                
+                if unrealized_return <= current_sl_threshold or unrealized_return >= tp_pct:
+                    self.environment.execute_trade(ticker, -current_pos, price, current_timestamp)
+                    self._cooldown_counter = self.cooldown_periods
+                    closed_due_to_risk = True
+                    current_pos = 0.0 
+                    current_sl_threshold = base_sl_pct 
+
+            # 2. Make Predictions & Issue Orders
+            if not closed_due_to_risk and self._cooldown_counter == 0:
+                sequence = features_df.iloc[i - seq_len : i].values
+                
+                probs = self.model.predict(sequence)
+                p_flat, p_up, p_down = probs[0], probs[1], probs[2]
+
+                target_pos = current_pos
+
+                # Multi-class Execution Logic
+                if p_up > self.threshold and p_up > p_down:
+                    target_pos = 1.0  # Confident Up
+                elif p_down > self.threshold and p_down > p_up:
+                    target_pos = -1.0 # Confident Down
+                elif p_flat > max(p_up, p_down):
+                    target_pos = 0.0  # Volatile Chop/Sideways -> Exit
+                
+                # Execute difference
+                if target_pos != current_pos:
+                    trade_size = target_pos - current_pos
+                    self.environment.execute_trade(ticker, trade_size, price, current_timestamp)
+                    current_pos = target_pos
+
+            results.append({
+                'timestamp': current_timestamp,
+                'price': price,
+                'position': current_pos,
+                'portfolio_value': port_value,
+                'prob_flat': probs[0],
+                'prob_up': probs[1],
+                'prob_down': probs[2]
+            })
+
+        return pd.DataFrame(results)
