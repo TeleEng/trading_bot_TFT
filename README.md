@@ -53,12 +53,14 @@ trading_bot/
 │       ├── GBPUSD.csv
 │       └── GC_F.csv
 ├── src/
-│   ├── download_data.py              # Phase 1a: Market data download
+│   ├── data_downloader.py            # Phase 1a: Market data download
 │   ├── preprocess.py                 # Phase 1b: Synchronization & feature engineering
 │   ├── model.py                      # Phase 2: LSTM model (Darts-based)
 │   ├── environment.py                # Trading environment simulation
 │   ├── backtest.py                   # Phase 3: Backtesting engine
 │   ├── performance.py                # Metrics calculation and visualization
+│   ├── generate_test_data.py         # Generate synthetic test data for testing
+│   ├── test_suite.py                 # Comprehensive test suite for all modules
 │   └── main.py                       # Orchestration (runs all phases)
 ├── models/
 │   └── model                         # Trained LSTM weights
@@ -109,6 +111,23 @@ This will:
 3. **Phase 2**: Train LSTM model (1-2 minutes)
 4. **Phase 3**: Run backtest on full historical data
 5. **Output**: Trading metrics and equity curve visualization
+
+### Testing
+
+Run the test suite to validate all modules:
+
+```bash
+cd src
+python test_suite.py
+```
+
+Generate synthetic test data for quick validation:
+
+```bash
+python generate_test_data.py
+```
+
+This creates sample OHLCV data useful for testing without downloading real market data.
 
 ### Expected Output
 
@@ -235,7 +254,7 @@ for each timestamp t:
 
 ### Modify Assets
 
-Edit `src/download_data.py`:
+Edit `src/data_downloader.py`:
 ```python
 TICKERS = {
     'BTC-USD': 'BTC_USD',
@@ -335,12 +354,14 @@ input_chunk_length=5,  # Reduce from 10
 
 | File | Purpose |
 |------|---------|
-| `download_data.py` | Downloads hourly OHLCV data from yfinance |
+| `data_downloader.py` | Downloads hourly OHLCV data from yfinance |
 | `preprocess.py` | Synchronizes assets, engineers features |
 | `model.py` | Darts LSTM model wrapper with train/predict API |
 | `environment.py` | Simulates trading account and position tracking |
 | `backtest.py` | Historical backtesting engine |
 | `performance.py` | Calculates metrics and visualizes results |
+| `generate_test_data.py` | Creates synthetic OHLCV data for testing and validation |
+| `test_suite.py` | Unit tests and integration tests for all modules |
 | `main.py` | Orchestrates all phases end-to-end |
 
 ## Dependencies
