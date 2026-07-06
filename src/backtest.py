@@ -92,21 +92,31 @@ class Backtester:
                 probs = self.model.predict(sequence)
                 p_flat, p_up, p_down = probs[0], probs[1], probs[2]
 
-                target_pos = current_pos
-
                 # Multi-class Execution Logic
                 if p_up > self.threshold and p_up > p_down:
-                    target_pos = 1.0  # Confident Up
+                    target_direction = 1.0  # Confident Up
                 elif p_down > self.threshold and p_down > p_up:
-                    target_pos = -1.0 # Confident Down
+                    target_direction = -1.0 # Confident Down
                 elif p_flat > max(p_up, p_down):
-                    target_pos = 0.0  # Volatile Chop/Sideways -> Exit
+                    target_direction = 0.0  # Volatile Chop/Sideways -> Exit
+                else:
+                    target_direction = 1.0 if current_pos > 0 else (-1.0 if current_pos < 0 else 0.0)
                 
+                current_direction = 1.0 if current_pos > 0 else (-1.0 if current_pos < 0 else 0.0)
+
                 # Execute difference
-                if target_pos != current_pos:
-                    trade_size = target_pos - current_pos
-                    self.environment.execute_trade(ticker, trade_size, price, current_timestamp)
-                    current_pos = target_pos
+                if target_direction != current_direction:
+                    if target_direction == 0.0:
+                        target_qty = 0.0
+                    else:
+                        risk_amount = self.environment.portfolio_value * self.risk_percentage
+                        risk_per_unit = atr * self.sl_mult
+                        target_qty = (risk_amount / risk_per_unit) * target_direction if risk_per_unit > 0 else 0.0
+                        
+                    trade_size = target_qty - current_pos
+                    success = self.environment.execute_trade(ticker, trade_size, price, current_timestamp)
+                    if success:
+                        current_pos = target_qty
 
             results.append({
                 'timestamp': current_timestamp,

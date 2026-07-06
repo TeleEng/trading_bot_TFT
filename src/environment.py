@@ -4,9 +4,10 @@ import pandas as pd
 class TradingEnvironment:
     """Custom environment for simulating trading with a portfolio."""
 
-    def __init__(self, initial_capital=10000):
+    def __init__(self, initial_capital=10000, leverage=50):
         self.initial_capital = initial_capital
         self.capital = initial_capital
+        self.leverage = leverage
         self.positions = {}  # {ticker: quantity}
         self.entry_prices = {} # {ticker: avg_entry_price}
         self.portfolio_value = initial_capital
@@ -35,6 +36,15 @@ class TradingEnvironment:
 
         cost = abs(quantity * price)
         fee = cost * self.get_fee_rate(ticker)
+
+        # Margin check: if increasing absolute position size, ensure we have enough equity
+        old_qty = self.positions.get(ticker, 0.0)
+        new_qty = old_qty + quantity
+        
+        if abs(new_qty) > abs(old_qty):
+            margin_required = cost / self.leverage
+            if (margin_required + fee) > self.portfolio_value:
+                return False  # Insufficient margin
 
         # Prevent trading if bankrupt
         if self.portfolio_value <= 0:

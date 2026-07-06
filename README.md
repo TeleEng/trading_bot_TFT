@@ -309,7 +309,8 @@ class TemporalFusionTransformer(nn.Module):
 - Optimizer: Adam(lr=0.001)
 - Learning rate scheduler: ReduceLROnPlateau (patience=5, factor=0.5)
 - Early stopping: patience=15 epochs on validation loss
-- Train/Val split: 80/20 of last 10,000 rows
+- Train/Val split: 80/20 of last 10,000 rows (strictly split *before* scaling to prevent data leakage)
+- Hardware: GPU (CUDA) is strictly enforced for training
 
 Output: Probability distribution [P_Flat, P_Up, P_Down]
 
@@ -337,7 +338,8 @@ Output: Probability distribution [P_Flat, P_Up, P_Down]
 - Dynamic stops/targets based on hourly ATR
 - Break-even plus: Move stop to +50% of TP once at 70% unrealized gain
 - Forex fee rate: 0.01% (spreads for EURUSD)
-- Position size: Fixed 1 unit per trade
+- Position size: Dynamic sizing based on ATR and Risk Percentage (e.g. risk 2% of portfolio per trade)
+- Margin & Leverage: Enforces standard 50:1 leverage checks before executing trades to prevent over-margining
 
 ### Phase 4: Performance Metrics
 

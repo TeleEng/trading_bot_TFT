@@ -25,7 +25,7 @@ def generate_synthetic_data(ticker_name, num_periods=500, start_price=100, volat
 
 def create_test_data():
     """Create synthetic data for testing."""
-    data_path = "trading_bot/data/raw"
+    data_path = "../data/raw"
     os.makedirs(data_path, exist_ok=True)
 
     tickers = {

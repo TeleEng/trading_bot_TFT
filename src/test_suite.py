@@ -30,21 +30,21 @@ from model import PricePredictor
 try:
     # FIX: Initialize the TFT model properly (removing invalid 'random_forest' param)
     model = PricePredictor(input_chunk_length=10)
-    data_files = list(Path("trading_bot/data/processed").glob("*.csv"))
+    data_files = list(Path("../data/processed").glob("*.csv"))
     if not data_files:
         raise FileNotFoundError("No processed data files found")
 
     # Limit train size for faster testing
     df = pd.read_csv(str(data_files[0]), index_col=0, parse_dates=True)
-    train_file = "trading_bot/data/processed/test_split_for_suite.csv"
+    train_file = "../data/processed/test_split_for_suite.csv"
     df.iloc[:200].to_csv(train_file)
 
     train_score, test_score = model.train(train_file, epochs=2)
     print(f"[OK] Model training successful (Test Acc: {test_score:.4f})")
 
     # Save model
-    os.makedirs("trading_bot/models", exist_ok=True)
-    model.save("trading_bot/models/test_model.pkl")
+    os.makedirs("../models", exist_ok=True)
+    model.save("../models/test_model.pkl")
     print("[OK] Model saved successfully")
 except Exception as e:
     print(f"[FAIL] Model training failed: {e}")
@@ -108,9 +108,9 @@ try:
             print(f"  {key}: {value:.2f}")
 
     # Generate visualization
-    os.makedirs("trading_bot/results", exist_ok=True)
-    PerformanceMetrics.plot_results(backtest_results, save_path="trading_bot/results/test_backtest.png")
-    print("[OK] Visualization saved to trading_bot/results/test_backtest.png")
+    os.makedirs("../results", exist_ok=True)
+    PerformanceMetrics.plot_results(backtest_results, save_path="../results/test_backtest.png")
+    print("[OK] Visualization saved to ../results/test_backtest.png")
 
 except Exception as e:
     print(f"[FAIL] Performance metrics failed: {e}")

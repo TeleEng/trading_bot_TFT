@@ -53,7 +53,9 @@ class PricePredictor:
         self.input_chunk_length = input_chunk_length
         self.hidden_size = hidden_size
         self.num_layers = num_layers
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if not torch.cuda.is_available():
+            raise RuntimeError("GPU requested but CUDA is not available!")
+        self.device = torch.device('cuda')
         self.scaler = StandardScaler()
         self.model = None
         self.history = {'train_loss': [], 'val_loss': [], 'val_acc': []}
@@ -62,36 +64,41 @@ class PricePredictor:
         self.last_val_targets = []
         self.last_val_preds = []
 
-    def prepare_data(self, csv_path, is_training=True):
-        df = pd.read_csv(csv_path, index_col=0, parse_dates=True)
-        
-        # Separate features and target
-        target = df['target'].values
-        # Ensure features is strictly a numpy array to avoid sklearn warnings
-        features = df.drop(columns=['target']).values
-
-        if is_training:
-            features_scaled = self.scaler.fit_transform(features)
-        else:
-            features_scaled = self.scaler.transform(features)
-
+    def create_sequences(self, features_scaled, target):
         X, y = [], []
         for i in range(len(features_scaled) - self.input_chunk_length):
             X.append(features_scaled[i:i + self.input_chunk_length])
             y.append(target[i + self.input_chunk_length])
-
         return torch.FloatTensor(np.array(X)), torch.LongTensor(np.array(y))
 
     def train(self, train_csv, epochs=150, batch_size=64):
-        X, y = self.prepare_data(train_csv, is_training=True)
+        df = pd.read_csv(train_csv, index_col=0, parse_dates=True)
+        target = df['target'].values
+        features = df.drop(columns=['target']).values
         
-        # 80/20 Internal Train/Val split
-        split = int(0.8 * len(X))
-        X_train, y_train = X[:split].to(self.device), y[:split].to(self.device)
-        X_val, y_val = X[split:].to(self.device), y[split:].to(self.device)
+        # 80/20 Internal Train/Val split (done before scaling to prevent leakage)
+        split = int(0.8 * len(features))
+        
+        features_train = features[:split]
+        target_train = target[:split]
+        
+        # Include previous chunk_length rows so the first val prediction is exactly at `split`
+        features_val = features[split - self.input_chunk_length:]
+        target_val = target[split - self.input_chunk_length:]
+        
+        features_train_scaled = self.scaler.fit_transform(features_train)
+        features_val_scaled = self.scaler.transform(features_val)
+        
+        X_train, y_train = self.create_sequences(features_train_scaled, target_train)
+        X_val, y_val = self.create_sequences(features_val_scaled, target_val)
+        
+        X_train, y_train = X_train.to(self.device), y_train.to(self.device)
+        X_val, y_val = X_val.to(self.device), y_val.to(self.device)
+        
+        input_features = features.shape[1]
 
         self.model = TemporalFusionTransformer(
-            input_size=X.shape[2],
+            input_size=input_features,
             hidden_size=self.hidden_size,
             num_layers=self.num_layers
         ).to(self.device)
@@ -105,7 +112,7 @@ class PricePredictor:
         patience_counter = 0
         early_stopping_patience = 15
 
-        print(f"Training Multi-Class TFT (Features: {X.shape[2]}, Target Classes: 3)...")
+        print(f"Training Multi-Class TFT (Features: {input_features}, Target Classes: 3)...")
         for epoch in range(epochs):
             self.model.train()
             train_loss = 0

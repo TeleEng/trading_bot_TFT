@@ -6,8 +6,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATA_PATH = Path(r"trading_bot/data/raw")
-OUTPUT_PATH = Path(r"trading_bot/data/processed")
+DATA_PATH = Path(r"../data/raw")
+OUTPUT_PATH = Path(r"../data/processed")
 TARGET_TIMEFRAME = os.getenv("TARGET_TIMEFRAME", "1h")
 MAIN_ASSET = os.getenv("MAIN_ASSET", "EURUSD")
 
@@ -146,7 +146,7 @@ def process_all_data():
     else:
         unified = main_df
 
-    unified.ffill(inplace=True) 
+    unified.ffill(limit=12, inplace=True)
     unified.dropna(inplace=True)
     unified = unified.iloc[:-6] # Drop final 6 rows (unresolved labels)
 
