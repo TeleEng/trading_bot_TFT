@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 import pandas as pd
 from pathlib import Path
 
-from data_downloader import download_data, TICKERS, INTERVAL, DATA_PATH
+from data_downloader import download_histdata, TICKERS, START_YEAR, END_YEAR, DATA_PATH
 from preprocess import process_all_data, OUTPUT_PATH
 from model import PricePredictor
 from environment import TradingEnvironment
@@ -30,7 +30,7 @@ def main():
 
     # Phase 1: Download Data
     print("\n[Phase 1] Downloading market data...")
-    # download_data(TICKERS, INTERVAL, DATA_PATH)
+    # download_histdata(TICKERS, START_YEAR, END_YEAR, DATA_PATH)
 
     # Phase 1: Preprocess Data
     print("\n[Phase 1] Preprocessing data and engineering features...")
