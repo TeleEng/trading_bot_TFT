@@ -150,9 +150,12 @@ def process_all_data():
     unified.dropna(inplace=True)
     unified = unified.iloc[:-6] # Drop final 6 rows (unresolved labels)
 
-    unified['hour_of_day'] = unified.index.hour
-    unified['day_of_week'] = unified.index.dayofweek
-    unified['month'] = unified.index.month
+    unified['hour_sin'] = np.sin(2 * np.pi * unified.index.hour / 24)
+    unified['hour_cos'] = np.cos(2 * np.pi * unified.index.hour / 24)
+    unified['day_sin'] = np.sin(2 * np.pi * unified.index.dayofweek / 7)
+    unified['day_cos'] = np.cos(2 * np.pi * unified.index.dayofweek / 7)
+    unified['month_sin'] = np.sin(2 * np.pi * unified.index.month / 12)
+    unified['month_cos'] = np.cos(2 * np.pi * unified.index.month / 12)
 
     output_file = OUTPUT_PATH / f"{MAIN_ASSET}_master.csv"
     unified.to_csv(output_file)

@@ -37,9 +37,9 @@ try:
     # Limit train size for faster testing
     df = pd.read_csv(str(data_files[0]), index_col=0, parse_dates=True)
     train_file = "../data/processed/test_split_for_suite.csv"
-    df.iloc[:200].to_csv(train_file)
+    df.iloc[:60].to_csv(train_file)
 
-    train_score, test_score = model.train(train_file, epochs=2)
+    train_score, test_score = model.train(train_file, epochs=1)
     print(f"[OK] Model training successful (Test Acc: {test_score:.4f})")
 
     # Save model

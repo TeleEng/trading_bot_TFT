@@ -11,9 +11,40 @@ import joblib
 import os
 from pathlib import Path
 
+class InstanceNormalization1D(nn.Module):
+    def __init__(self, eps=1e-5):
+        super(InstanceNormalization1D, self).__init__()
+        self.eps = eps
+
+    def forward(self, x):
+        mean = torch.mean(x, dim=1, keepdim=True)
+        std = torch.std(x, dim=1, keepdim=True)
+        return (x - mean) / (std + self.eps)
+
+class VariableSelectionNetwork(nn.Module):
+    def __init__(self, num_features, hidden_size, dropout=0.2):
+        super(VariableSelectionNetwork, self).__init__()
+        self.weight_network = nn.Sequential(
+            nn.Linear(num_features, hidden_size),
+            nn.ELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_size, num_features),
+            nn.Softmax(dim=-1)
+        )
+    
+    def forward(self, x):
+        weights = self.weight_network(x)
+        return x * weights
+
 class TemporalFusionTransformer(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, dropout=0.2):
         super(TemporalFusionTransformer, self).__init__()
+        
+        # Instance Normalization
+        self.norm = InstanceNormalization1D()
+        
+        # Variable Selection Network
+        self.vsn = VariableSelectionNetwork(input_size, hidden_size, dropout)
         
         # LSTM Encoder
         self.lstm = nn.LSTM(
@@ -42,6 +73,8 @@ class TemporalFusionTransformer(nn.Module):
         )
 
     def forward(self, x):
+        x = self.norm(x)
+        x = self.vsn(x)
         lstm_out, _ = self.lstm(x)
         attn_out, _ = self.attention(lstm_out, lstm_out, lstm_out)
         final_timestep = attn_out[:, -1, :]
@@ -56,7 +89,6 @@ class PricePredictor:
         if not torch.cuda.is_available():
             raise RuntimeError("GPU requested but CUDA is not available!")
         self.device = torch.device('cuda')
-        self.scaler = StandardScaler()
         self.model = None
         self.history = {'train_loss': [], 'val_loss': [], 'val_acc': []}
         
@@ -64,10 +96,10 @@ class PricePredictor:
         self.last_val_targets = []
         self.last_val_preds = []
 
-    def create_sequences(self, features_scaled, target):
+    def create_sequences(self, features_array, target):
         X, y = [], []
-        for i in range(len(features_scaled) - self.input_chunk_length):
-            X.append(features_scaled[i:i + self.input_chunk_length])
+        for i in range(len(features_array) - self.input_chunk_length):
+            X.append(features_array[i:i + self.input_chunk_length])
             y.append(target[i + self.input_chunk_length])
         return torch.FloatTensor(np.array(X)), torch.LongTensor(np.array(y))
 
@@ -86,11 +118,8 @@ class PricePredictor:
         features_val = features[split - self.input_chunk_length:]
         target_val = target[split - self.input_chunk_length:]
         
-        features_train_scaled = self.scaler.fit_transform(features_train)
-        features_val_scaled = self.scaler.transform(features_val)
-        
-        X_train, y_train = self.create_sequences(features_train_scaled, target_train)
-        X_val, y_val = self.create_sequences(features_val_scaled, target_val)
+        X_train, y_train = self.create_sequences(features_train, target_train)
+        X_val, y_val = self.create_sequences(features_val, target_val)
         
         X_train, y_train = X_train.to(self.device), y_train.to(self.device)
         X_val, y_val = X_val.to(self.device), y_val.to(self.device)
@@ -196,8 +225,7 @@ class PricePredictor:
             elif not isinstance(sequence, np.ndarray):
                 sequence = np.asarray(sequence)
                 
-            sequence_scaled = self.scaler.transform(sequence)
-            seq_tensor = torch.FloatTensor(sequence_scaled).unsqueeze(0).to(self.device)
+            seq_tensor = torch.FloatTensor(sequence).unsqueeze(0).to(self.device)
             outputs = self.model(seq_tensor)
             # Apply softmax to get pure probabilities for [P_Flat, P_Up, P_Down]
             probs = torch.softmax(outputs, dim=1)
@@ -207,8 +235,6 @@ class PricePredictor:
         path_obj = Path(filepath)
         path_obj.parent.mkdir(parents=True, exist_ok=True)
         torch.save(self.model.state_dict(), str(path_obj))
-        scaler_path = path_obj.with_suffix('.scaler.pkl')
-        joblib.dump(self.scaler, str(scaler_path))
 
     def plot_confusion_matrix(self, save_path=None):
         if not self.last_val_targets:
