@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 import pandas as pd
 from pathlib import Path
 
-from download_data import download_data, TICKERS, INTERVAL, DATA_PATH
+from data_downloader import download_data, TICKERS, INTERVAL, DATA_PATH
 from preprocess import process_all_data, OUTPUT_PATH
 from model import PricePredictor
 from environment import TradingEnvironment
