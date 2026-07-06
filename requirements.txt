@@ -1,0 +1,8 @@
+pandas
+numpy
+torch
+histdata
+python-dotenv
+scikit-learn
+matplotlib
+seaborn
