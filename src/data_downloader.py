@@ -21,7 +21,8 @@ START_YEAR = int(os.getenv("HISTDATA_START_YEAR", 2008))
 END_YEAR = int(os.getenv("HISTDATA_END_YEAR", 2026))
 
 # Ensure data directory exists
-DATA_PATH = Path("../data/raw")
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_PATH = BASE_DIR / "data" / "raw"
 DATA_PATH.mkdir(parents=True, exist_ok=True)
 
 def download_histdata(tickers, start_year, end_year, path):

@@ -6,8 +6,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATA_PATH = Path(r"../data/raw")
-OUTPUT_PATH = Path(r"../data/processed")
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_PATH = BASE_DIR / "data" / "raw"
+OUTPUT_PATH = BASE_DIR / "data" / "processed"
 TARGET_TIMEFRAME = os.getenv("TARGET_TIMEFRAME", "1h")
 MAIN_ASSET = os.getenv("MAIN_ASSET", "EURUSD")
 
