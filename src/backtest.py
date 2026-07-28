@@ -42,6 +42,9 @@ class Backtester:
         seq_len = self.model.input_chunk_length
         current_sl_threshold = 0.0
 
+        print("Precomputing batched GPU predictions for speed...")
+        all_probs = self.model.predict_batch(features_df)
+
         for i in range(seq_len, len(df)):
             current_row = df.iloc[i]
             current_timestamp = df.index[i]
@@ -58,14 +61,10 @@ class Backtester:
             if self._cooldown_counter > 0:
                 self._cooldown_counter -= 1
 
-            # Reset dynamic Stop Loss if flat
-            if current_pos == 0:
-                current_sl_threshold = -((self.sl_mult * atr) / price)
-
-            # 1. Evaluate Dynamic ATR Risk Management
             closed_due_to_risk = False
-            if current_pos != 0 and entry_price > 0:
-                
+
+            # 1. Manage Open Risk
+            if current_pos != 0:
                 # Convert the ATR dollar move into a percentage for the trailing math
                 tp_pct = (self.tp_mult * atr) / entry_price
                 base_sl_pct = -((self.sl_mult * atr) / entry_price)
@@ -87,9 +86,8 @@ class Backtester:
 
             # 2. Make Predictions & Issue Orders
             if not closed_due_to_risk and self._cooldown_counter == 0:
-                sequence = features_df.iloc[i - seq_len : i].values
-                
-                probs = self.model.predict(sequence)
+                # O(1) lookup instead of O(N) GPU pass
+                probs = all_probs[i - seq_len]
                 p_flat, p_up, p_down = probs[0], probs[1], probs[2]
 
                 # Multi-class Execution Logic
