@@ -62,7 +62,7 @@ def main():
     test_df.to_csv(test_file)
     
     print("\n[Phase 3] Self-Supervised Contrastive Training...")
-    train_score, val_score = model.train(str(train_file), str(val_file), epochs=10)
+    train_score, val_score = model.train(str(train_file), str(val_file), epochs=150)
     print(f"Model trained on 60% split of {first_ticker_file.name}")
     print(f"Final InfoNCE Loss - Train: {train_score:.4f} | Val: {val_score:.4f}")
 
