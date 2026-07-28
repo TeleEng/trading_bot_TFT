@@ -19,8 +19,10 @@ class InstanceNormalization1D(nn.Module):
 
     def forward(self, x):
         mean = torch.mean(x, dim=1, keepdim=True)
-        std = torch.std(x, dim=1, keepdim=True)
-        return (x - mean) / (std + self.eps)
+        std = torch.std(x, dim=1, keepdim=True, unbiased=False)
+        # Prevent dividing by 0 or amplifying tiny noise
+        std = torch.where(std > 1e-4, std, torch.ones_like(std))
+        return (x - mean) / std
 
 class VariableSelectionNetwork(nn.Module):
     def __init__(self, num_features, hidden_size, dropout=0.2):
@@ -35,7 +37,7 @@ class VariableSelectionNetwork(nn.Module):
     
     def forward(self, x):
         weights = self.weight_network(x)
-        return x * weights
+        return x * weights * x.shape[-1]
 
 class TemporalFusionTransformer(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, num_over_clusters=15, dropout=0.2):
@@ -55,19 +57,22 @@ class TemporalFusionTransformer(nn.Module):
             dropout=dropout,
             batch_first=True
         )
+        self.attn_layer_norm = nn.LayerNorm(hidden_size)
         
         # Instance Head for InfoNCE
         self.instance_head = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size, bias=False),
+            nn.BatchNorm1d(hidden_size),
+            nn.ReLU(inplace=True),
             nn.Linear(hidden_size, 32)
         )
         
         # Over-Cluster Head
         self.num_over_clusters = num_over_clusters
         self.over_cluster_head = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size),
-            nn.ReLU(),
+            nn.Linear(hidden_size, hidden_size, bias=False),
+            nn.BatchNorm1d(hidden_size),
+            nn.ReLU(inplace=True),
             nn.Linear(hidden_size, num_over_clusters),
             nn.Softmax(dim=-1)
         )
@@ -77,6 +82,9 @@ class TemporalFusionTransformer(nn.Module):
         x = self.vsn(x)
         lstm_out, _ = self.lstm(x)
         attn_out, _ = self.attention(lstm_out, lstm_out, lstm_out)
+        
+        # Residual connection and LayerNorm
+        attn_out = self.attn_layer_norm(lstm_out + attn_out)
         
         # Backbone embedding h
         h = attn_out[:, -1, :]
