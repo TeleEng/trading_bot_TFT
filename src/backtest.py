@@ -25,15 +25,23 @@ class Backtester:
         self.cooldown_periods = 2 # Reduced cooldown for faster 6h strategy
         self._cooldown_counter = 0
 
-    def run(self, data_path, asset_price_col='Close'):
-        print(f"Starting Multi-Class Dynamic ATR Backtest on {data_path}...")
-        df = pd.read_csv(data_path, index_col=0, parse_dates=True)
-        ticker = MAIN_ASSET
-
-        if 'target' in df.columns:
-            features_df = df.drop(columns=['target'])
+    def run(self, data_source, asset_price_col='Close'):
+        print(f"Starting Multi-Class Dynamic ATR Backtest...")
+        
+        if isinstance(data_source, str):
+            df = pd.read_csv(data_source, index_col=0, parse_dates=True)
+            ticker = MAIN_ASSET
+            features_df = df.drop(columns=['target'], errors='ignore')
+            print("Precomputing batched GPU predictions for speed...")
+            all_probs = self.model.predict_batch(features_df)
         else:
-            features_df = df
+            # Tuple of DataFrames for MTF
+            df_1h, df_4h, df_1d = data_source
+            df = df_1h
+            ticker = MAIN_ASSET
+            features_df = (df_1h.drop(columns=['target'], errors='ignore'), df_4h, df_1d)
+            print("Precomputing MTF batched GPU predictions with Voting...")
+            all_probs = self.model.predict_batch_voted(features_df)
 
         results = []
         self.environment.reset()
@@ -41,9 +49,6 @@ class Backtester:
         
         seq_len = self.model.input_chunk_length
         current_sl_threshold = 0.0
-
-        print("Precomputing batched GPU predictions for speed...")
-        all_probs = self.model.predict_batch(features_df)
 
         for i in range(seq_len, len(df)):
             current_row = df.iloc[i]

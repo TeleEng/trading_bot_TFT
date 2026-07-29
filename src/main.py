@@ -6,6 +6,7 @@ import os
 import sys
 from dotenv import load_dotenv
 import pandas as pd
+import numpy as np
 from pathlib import Path
 
 from data_downloader import download_histdata, TICKERS, START_YEAR, END_YEAR, DATA_PATH
@@ -16,12 +17,13 @@ from backtest import Backtester
 from performance import PerformanceMetrics
 from viz import plot_tsne_and_confusion_matrix
 
+from sklearn.cluster import AgglomerativeClustering
+
 def main():
     print("="*60)
-    print("TRADING BOT - FULL PIPELINE (SELF-SUPERVISED)")
+    print("TRADING BOT - FULL PIPELINE (SELF-SUPERVISED MTF)")
     print("="*60)
 
-    # Setup directories safely using Pathlib
     base_dir = Path(__file__).resolve().parent.parent
     models_dir = base_dir / "models"
     results_dir = base_dir / "results"
@@ -33,50 +35,96 @@ def main():
     # download_histdata(TICKERS, START_YEAR, END_YEAR, DATA_PATH)
     # process_all_data()
 
-    print("\n[Phase 2] Splitting Data (60/20/20)...")
+    print("\n[Phase 2] Loading MTF Data & Splitting (60/20/20)...")
     model = PricePredictor()
 
     load_dotenv()
     MAIN_ASSET = os.getenv("MAIN_ASSET", "EURUSD")
-    first_ticker_file = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master.csv"
     
-    if not first_ticker_file.exists():
-        print(f"[ERROR] {first_ticker_file} not found. Did you run preprocess.py?")
+    file_1h = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master_1h.csv"
+    file_4h = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master_4h.csv"
+    file_1d = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master_1d.csv"
+    
+    if not file_1h.exists() or not file_4h.exists() or not file_1d.exists():
+        print(f"[ERROR] MTF files not found. Did you run preprocess.py?")
         sys.exit(1)
         
-    df = pd.read_csv(first_ticker_file, index_col=0, parse_dates=True).iloc[-10_000:]
+    df_1h = pd.read_csv(file_1h, index_col=0, parse_dates=True).iloc[-10_000:]
+    df_4h = pd.read_csv(file_4h, index_col=0, parse_dates=True)
+    df_1d = pd.read_csv(file_1d, index_col=0, parse_dates=True)
     
-    val_idx = int(len(df) * 0.6)
-    test_idx = int(len(df) * 0.8)
+    val_idx = int(len(df_1h) * 0.6)
+    test_idx = int(len(df_1h) * 0.8)
     
-    train_df = df.iloc[:val_idx]
-    val_df = df.iloc[val_idx - model.input_chunk_length : test_idx]
-    test_df = df.iloc[test_idx - model.input_chunk_length :] 
+    train_1h = df_1h.iloc[:val_idx]
+    val_1h = df_1h.iloc[val_idx - model.input_chunk_length : test_idx]
+    test_1h = df_1h.iloc[test_idx - model.input_chunk_length :] 
 
-    train_file = Path(OUTPUT_PATH) / "train_split.csv"
-    val_file = Path(OUTPUT_PATH) / "val_split.csv"
-    test_file = Path(OUTPUT_PATH) / "test_split.csv"
-    
-    train_df.to_csv(train_file)
-    val_df.to_csv(val_file)
-    test_df.to_csv(test_file)
-    
-    print("\n[Phase 3] Self-Supervised Contrastive Training...")
-    train_score, val_score = model.train(str(train_file), str(val_file), epochs=150)
-    print(f"Model trained on 60% split of {first_ticker_file.name}")
+    print("\n[Phase 3] Supervised Contrastive Training (MTF)...")
+    train_score, val_score = model.train(
+        (train_1h, df_4h, df_1d),
+        (val_1h, df_4h, df_1d),
+        epochs=20
+    )
     print(f"Final InfoNCE Loss - Train: {train_score:.4f} | Val: {val_score:.4f}")
+
+    print("\n[Phase 3.5] Building Cluster Voting Map via Agglomerative Clustering...")
+    W = model.model.over_cluster_head[3].weight.data.cpu().numpy() # (30, hidden_size)
+    agg = AgglomerativeClustering(n_clusters=3)
+    macro_labels = agg.fit_predict(W) # (30,)
+    
+    # Get raw 30-dim predictions AND aligned labels from create_sequences
+    train_result = model.create_sequences(train_1h, df_4h, df_1d)
+    X1_t, X4_t, X1d_t, y_train = train_result[0], train_result[1], train_result[2], train_result[3]
+    
+    # Run batch prediction on training data (pass full DataFrames, including target)
+    train_c_probs = model.predict_batch((train_1h, df_4h, df_1d)) # (N, 30)
+    train_micro_preds = train_c_probs.argmax(axis=1) # (N,)
+    train_macro_preds = np.array([macro_labels[m] for m in train_micro_preds]) # (N,)
+    
+    # y_train is already aligned from create_sequences
+    print(f"  train_c_probs shape: {train_c_probs.shape}, y_train shape: {y_train.shape}")
+    print(f"  Label distribution in y_train: {dict(zip(*np.unique(y_train, return_counts=True)))}")
+    
+    macro_to_target = {}
+    for macro_idx in range(3):
+        idx = (train_macro_preds == macro_idx)
+        if idx.sum() > 0:
+            majority_label = pd.Series(y_train[idx]).mode()[0]
+            macro_to_target[macro_idx] = int(majority_label)
+        else:
+            macro_to_target[macro_idx] = 0
+            
+    print(f"Macro-Cluster to Triple Barrier Label Mapping: {macro_to_target}")
+    
+    voting_map = {}
+    for micro_idx in range(30):
+        voting_map[micro_idx] = macro_to_target[macro_labels[micro_idx]]
+        
+    model.set_voting_map(voting_map)
 
     model_path = models_dir / "model.pkl"
     model.save(str(model_path))
+    
+    # Save the voting map for future inference!
+    import json
+    with open(models_dir / "voting_map.json", "w") as f:
+        json.dump(voting_map, f)
 
     print("\n[Phase 4] Generating t-SNE & Confusion Matrix...")
-    plot_tsne_and_confusion_matrix(model, str(test_file), str(results_dir))
+    # Let's skip visualization for MTF because plot_tsne_and_confusion_matrix expects single dataframe.
+    # plot_tsne_and_confusion_matrix(model, str(test_file), str(results_dir))
+    print("Skipped t-SNE due to MTF signature mismatch (will update later).")
 
     print("\n[Phase 5] Running out-of-sample backtest...")
     environment = TradingEnvironment(initial_capital=10000)
     backtester = Backtester(model, environment, threshold=0.35, risk_percentage=0.2)
 
-    backtest_results = backtester.run(str(test_file))
+    # Note: Backtester run() expects a CSV path. We need to update backtest.py to accept DataFrames!
+    # Wait, instead of updating backtester, we can temporarily monkey-patch or just pass dfs.
+    # The simplest is to modify backtest.py to accept DataFrames. Let's do that in a separate edit.
+    # For now, pass the DataFrames.
+    backtest_results = backtester.run((test_1h, df_4h, df_1d))
 
     metrics = PerformanceMetrics.calculate_metrics(
         backtest_results,

@@ -1,0 +1,10 @@
+
+<html><head>
+<meta http-equiv="content-type" content="text/html;charset=utf-8">
+<title>403 Forbidden</title>
+</head>
+<body text=#000000 bgcolor=#ffffff>
+<h1>Error: Forbidden</h1>
+<h2>Your client does not have permission to get URL <code>/kf/338539795/eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4Q0JDLUhTMjU2In0..ntYjqIB079oDOKYkiSFnqw.LVosEfpkm2ZcajdbvzaEdnLDpjv53KX2vmPAiTaFnm4DFxMUjbDJr2sDkIYU3Xn_dHVBsJgw0HZPHS1hwMDzsDZeRAllTpx5L2Ln-2wt39MifZvWPVOqWoUVVfn0D4p-T8ve4V3RQ2_VBSE7p_1CwUIuf6UCd-bULf-_2AHg-uN4Tp_M18kTdw0a7ZgCrRZqK4bjgVNsxKL1TsiLDhka8vCCg2XXyZm6rLpmb2HlEVEvs_mWqlmmLwaDGzTBivAxQElOdD-ksT0yJrQkI61lLeYOZvbqPbEqs5NS4SDUJgiprqZVCEqhRJ4mM408mmxyY6aP9nea3EMyE1wlEOKhYyZGj3H7af6cUj3oX3zHmWHaNq7H8I8QUczHUAS2LnZB_rEMR_kJz7b78K3p2Mz2vKwNnu8S126KUNhKa8JoL5dOzzqsEJOjSY1mB9vCM_aysaZN7MqHHEfm6yPGs_7bwqJtbWllxZU0Orj1wwrf-EtiOcJtaEeJeb04usInS_ltkdQmCAeNDJt_fnSXD1IQbYE2jHup3zdKn5n1ywxVRcMaRKWWxYIoIhDJq3CUJIb9KzQGgO_6KfKUBOjgasNZgs8t2CEjPuz2tyu8Gtp7890WQpV7n7mvEwchnFng54a_.iC1sf_hmtgy4IRQODfbE6w/trading_bot_TFT/src/main.py</code> from this server.</h2>
+<h2></h2>
+</body></html>

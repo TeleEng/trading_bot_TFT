@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_PATH = BASE_DIR / "data" / "raw"
+DATA_PATH = Path("D:/Work/trading_bot/archive/trading_bot_TFT/data/raw")
 OUTPUT_PATH = BASE_DIR / "data" / "processed"
 TARGET_TIMEFRAME = os.getenv("TARGET_TIMEFRAME", "1h")
 MAIN_ASSET = os.getenv("MAIN_ASSET", "EURUSD")
@@ -108,20 +108,19 @@ def add_essential_features(df):
     df['returns'] = df['Close'].pct_change()
     return df[['Close', 'returns', 'SMA_20', 'EMA_12', 'EMA_26', 'MACD']]
 
-def process_all_data():
-    print(f"--- Processing Multi-Asset Pipeline ---")
+def generate_timeframe_data(timeframe_str, is_base=False):
+    print(f"--- Processing {timeframe_str} Timeframe ---")
     raw_files = list(Path(DATA_PATH).glob("*.csv"))
     if not raw_files:
         raise ValueError(f"No CSV files found in {DATA_PATH}")
 
-    resample_freq = TARGET_TIMEFRAME.lower().replace('m', 'min')
+    resample_freq = timeframe_str.lower().replace('m', 'min')
 
     main_df = None
     exogenous_dfs = []
 
     for file in raw_files:
         ticker = file.stem
-        print(f"Loading & Resampling {ticker}...")
         df = pd.read_csv(file, index_col=0, parse_dates=True).sort_index()
         df = df.resample(resample_freq).agg({'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'})
         df.dropna(subset=['Open', 'High', 'Low', 'Close'], inplace=True)
@@ -131,12 +130,14 @@ def process_all_data():
         else:
             exogenous_dfs.append((ticker, df))
 
-    print(f"\nApplying FULL features + Triple Barrier to: {MAIN_ASSET}...")
     main_df = add_all_features(main_df)
+    
+    # Only the base timeframe needs the target labels
+    if is_base:
+        main_df = add_triple_barrier_labels(main_df, max_wait=6)
     
     processed_exogenous = {}
     for ticker, df in exogenous_dfs:
-        print(f"Applying ESSENTIAL features to: {ticker}...")
         df = add_essential_features(df)
         df.columns = [f"{ticker}_{col}" for col in df.columns]
         processed_exogenous[ticker] = df
@@ -149,7 +150,8 @@ def process_all_data():
 
     unified.ffill(limit=12, inplace=True)
     unified.dropna(inplace=True)
-    unified = unified.iloc[:-6] # Drop final 6 rows (unresolved labels)
+    if is_base:
+        unified = unified.iloc[:-6] # Drop final rows with unresolved labels
 
     unified['hour_sin'] = np.sin(2 * np.pi * unified.index.hour / 24)
     unified['hour_cos'] = np.cos(2 * np.pi * unified.index.hour / 24)
@@ -158,9 +160,15 @@ def process_all_data():
     unified['month_sin'] = np.sin(2 * np.pi * unified.index.month / 12)
     unified['month_cos'] = np.cos(2 * np.pi * unified.index.month / 12)
 
-    output_file = OUTPUT_PATH / f"{MAIN_ASSET}_master.csv"
+    output_file = OUTPUT_PATH / f"{MAIN_ASSET}_master_{timeframe_str}.csv"
     unified.to_csv(output_file)
-    print(f"\n[OK] Pipeline Complete! Saved to {output_file}")
+    print(f"Saved to {output_file}")
+
+def process_all_data():
+    generate_timeframe_data("1h", is_base=True)
+    generate_timeframe_data("4h", is_base=False)
+    generate_timeframe_data("1d", is_base=False)
+    print(f"\n[OK] MTF Pipeline Complete!")
 
 if __name__ == "__main__":
     process_all_data()
