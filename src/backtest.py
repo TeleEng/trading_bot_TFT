@@ -49,6 +49,7 @@ class Backtester:
         
         seq_len = self.model.input_chunk_length
         current_sl_threshold = 0.0
+        signal_history = []
 
         for i in range(seq_len, len(df)):
             current_row = df.iloc[i]
@@ -58,6 +59,11 @@ class Backtester:
             # Extract ATR for dynamic logic (fallback to 0.5% move if missing)
             atr = current_row.get('ATR', price * 0.005) 
             
+            # Cap ATR to prevent extremely large or small position sizes
+            atr_min = price * 0.001  # Minimum 0.1% move
+            atr_max = price * 0.02   # Maximum 2.0% move
+            atr = max(atr_min, min(atr, atr_max))
+
             self.environment.update_portfolio_value({ticker: price})
             port_value = self.environment.portfolio_value
             current_pos = self.environment.positions.get(ticker, 0.0)
@@ -95,27 +101,46 @@ class Backtester:
                 probs = all_probs[i - seq_len]
                 p_flat, p_up, p_down = probs[0], probs[1], probs[2]
 
-                # Multi-class Execution Logic
+                # Raw signal prediction
+                raw_signal = 0.0
                 if p_up > self.threshold and p_up > p_down:
-                    target_direction = 1.0  # Confident Up
+                    raw_signal = 1.0
                 elif p_down > self.threshold and p_down > p_up:
-                    target_direction = -1.0 # Confident Down
-                elif p_flat > max(p_up, p_down):
-                    target_direction = 0.0  # Volatile Chop/Sideways -> Exit
-                else:
-                    target_direction = 1.0 if current_pos > 0 else (-1.0 if current_pos < 0 else 0.0)
+                    raw_signal = -1.0
                 
+                # Append to rolling buffer (max 5)
+                signal_history.append(raw_signal)
+                if len(signal_history) > 5:
+                    signal_history.pop(0)
+
                 current_direction = 1.0 if current_pos > 0 else (-1.0 if current_pos < 0 else 0.0)
+                
+                # Default target direction remains the current direction
+                target_direction = current_direction
+
+                # Evaluate Signal Buffer for 3-out-of-5 confirmation
+                if len(signal_history) == 5:
+                    up_votes = signal_history.count(1.0)
+                    down_votes = signal_history.count(-1.0)
+                    
+                    if up_votes >= 3:
+                        target_direction = 1.0
+                    elif down_votes >= 3:
+                        target_direction = -1.0
+
+                # Note: We intentionally ignore raw_signal == 0.0 when in a trade, letting SL/TP handle exits.
 
                 # Execute difference
                 if target_direction != current_direction:
-                    if target_direction == 0.0:
-                        target_qty = 0.0
-                    else:
-                        risk_amount = self.environment.portfolio_value * self.risk_percentage
-                        risk_per_unit = atr * self.sl_mult
-                        target_qty = (risk_amount / risk_per_unit) * target_direction if risk_per_unit > 0 else 0.0
-                        
+                    # We only close to Flat if SL/TP hits, otherwise we swap Long/Short
+                    risk_amount = self.environment.portfolio_value * self.risk_percentage
+                    risk_per_unit = atr * self.sl_mult
+                    ideal_qty = (risk_amount / risk_per_unit) if risk_per_unit > 0 else 0.0
+                    
+                    # Cap by margin constraint (leave 2% buffer for fees/slippage)
+                    max_qty_allowed = (self.environment.portfolio_value * self.environment.leverage * 0.98) / price
+                    target_qty = min(ideal_qty, max_qty_allowed) * target_direction
+                    
                     trade_size = target_qty - current_pos
                     success = self.environment.execute_trade(ticker, trade_size, price, current_timestamp)
                     if success:

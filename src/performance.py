@@ -122,7 +122,7 @@ class PerformanceMetrics:
         plt.tight_layout()
         if save_path:
             plt.savefig(save_path, dpi=100)
-        plt.show()
+        plt.close()
 
     @staticmethod
     def print_report(metrics):

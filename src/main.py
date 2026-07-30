@@ -116,14 +116,11 @@ def main():
     # plot_tsne_and_confusion_matrix(model, str(test_file), str(results_dir))
     print("Skipped t-SNE due to MTF signature mismatch (will update later).")
 
-    print("\n[Phase 5] Running out-of-sample backtest...")
+    print("\n[Phase 5] Running out-of-sample backtest with 3-of-5 signal buffer...")
+    
     environment = TradingEnvironment(initial_capital=10000)
-    backtester = Backtester(model, environment, threshold=0.35, risk_percentage=0.2)
+    backtester = Backtester(model, environment, threshold=0.35, risk_percentage=0.02)
 
-    # Note: Backtester run() expects a CSV path. We need to update backtest.py to accept DataFrames!
-    # Wait, instead of updating backtester, we can temporarily monkey-patch or just pass dfs.
-    # The simplest is to modify backtest.py to accept DataFrames. Let's do that in a separate edit.
-    # For now, pass the DataFrames.
     backtest_results = backtester.run((test_1h, df_4h, df_1d))
 
     metrics = PerformanceMetrics.calculate_metrics(

@@ -94,6 +94,15 @@ def add_all_features(df):
     df['volatility'] = df['returns'].rolling(window=20).std()
     df['returns_squared'] = df['returns'] ** 2
     
+    # Stochastic Oscillator
+    low_14 = df['Low'].rolling(window=14).min()
+    high_14 = df['High'].rolling(window=14).max()
+    df['Stoch_K'] = 100 * ((df['Close'] - low_14) / (high_14 - low_14).replace(0, 1e-10))
+    df['Stoch_D'] = df['Stoch_K'].rolling(window=3).mean()
+    
+    # Momentum
+    df['Momentum_10'] = df['Close'] - df['Close'].shift(10)
+    
     # 6-Hour Triple Barrier
     df = add_triple_barrier_labels(df, max_wait=6)
     

@@ -83,6 +83,14 @@ class MultiTimeframeTFT(nn.Module):
             nn.Linear(hidden_size, num_over_clusters),
             nn.Softmax(dim=-1)
         )
+        
+        # Direct Classification Head (3 classes: Flat/Up/Down)
+        self.classification_head = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.ReLU(inplace=True),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_size // 2, 3)
+        )
 
     def process_branch(self, x, vsn_layer, lstm_layer):
         x = self.norm(x)
@@ -111,8 +119,9 @@ class MultiTimeframeTFT(nn.Module):
         # 5. Heads
         z = self.instance_head(h)
         c_over = self.over_cluster_head(h)
+        logits = self.classification_head(h)
         
-        return h, z, c_over
+        return h, z, c_over, logits
 
 class PricePredictor:
     def __init__(self, input_chunk_length=30, hidden_size=64, num_layers=2):
@@ -186,11 +195,21 @@ class PricePredictor:
         val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
 
         criterion = SupervisedContrastiveClusteringLoss(batch_size=batch_size)
-
-        print("Starting MTF Supervised Contrastive Training...")
+        
+        # Class-weighted cross-entropy to combat the 53% Down imbalance
+        # Compute inverse-frequency weights from training labels
+        label_counts = torch.bincount(y_t, minlength=3).float()
+        class_weights = (1.0 / (label_counts + 1e-6))
+        class_weights = class_weights / class_weights.sum() * 3.0  # normalize so they sum to num_classes
+        class_weights = class_weights.to(self.device)
+        ce_criterion = nn.CrossEntropyLoss(weight=class_weights)
+        
+        print(f"Class weights: {class_weights.cpu().numpy()}")
+        print("Starting MTF Supervised Contrastive + Classification Training...")
         for epoch in range(epochs):
             self.model.train()
             total_loss = 0
+            total_ce_loss = 0
             for b_x1, b_x4, b_x1d, b_y in train_loader:
                 optimizer.zero_grad()
                 
@@ -198,33 +217,52 @@ class PricePredictor:
                 x1_i, x4_i, x1d_i = self.augmenter.augment(b_x1), b_x4, b_x1d
                 x1_j, x4_j, x1d_j = self.augmenter.augment(b_x1), b_x4, b_x1d
                 
-                _, z_i, c_i = self.model(x1_i, x4_i, x1d_i)
-                _, z_j, c_j = self.model(x1_j, x4_j, x1d_j)
+                _, z_i, c_i, logits_i = self.model(x1_i, x4_i, x1d_i)
+                _, z_j, c_j, logits_j = self.model(x1_j, x4_j, x1d_j)
                 
-                loss = criterion(z_i, z_j, c_i, c_j, b_y)
+                # SupCon + Cluster loss
+                loss_contrastive = criterion(z_i, z_j, c_i, c_j, b_y)
+                
+                # Classification loss (average over both views)
+                loss_ce = (ce_criterion(logits_i, b_y) + ce_criterion(logits_j, b_y)) / 2.0
+                
+                loss = loss_contrastive + loss_ce
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
+                total_ce_loss += loss_ce.item()
                 
             avg_train_loss = total_loss / len(train_loader)
+            avg_ce_loss = total_ce_loss / len(train_loader)
             self.history['train_loss'].append(avg_train_loss)
             
             self.model.eval()
             total_val_loss = 0
+            total_val_ce = 0
+            correct = 0
+            total_samples = 0
             with torch.no_grad():
                 for b_x1, b_x4, b_x1d, b_y in val_loader:
                     x1_i, x4_i, x1d_i = self.augmenter.augment(b_x1), b_x4, b_x1d
                     x1_j, x4_j, x1d_j = self.augmenter.augment(b_x1), b_x4, b_x1d
-                    _, z_i, c_i = self.model(x1_i, x4_i, x1d_i)
-                    _, z_j, c_j = self.model(x1_j, x4_j, x1d_j)
-                    loss = criterion(z_i, z_j, c_i, c_j, b_y)
-                    total_val_loss += loss.item()
+                    _, z_i, c_i, logits_i = self.model(x1_i, x4_i, x1d_i)
+                    _, z_j, c_j, logits_j = self.model(x1_j, x4_j, x1d_j)
+                    loss_contrastive = criterion(z_i, z_j, c_i, c_j, b_y)
+                    loss_ce = (ce_criterion(logits_i, b_y) + ce_criterion(logits_j, b_y)) / 2.0
+                    total_val_loss += (loss_contrastive + loss_ce).item()
+                    total_val_ce += loss_ce.item()
+                    # Accuracy on view i
+                    preds = logits_i.argmax(dim=1)
+                    correct += (preds == b_y).sum().item()
+                    total_samples += b_y.size(0)
             
             avg_val_loss = total_val_loss / len(val_loader)
             self.history['val_loss'].append(avg_val_loss)
             
             if (epoch + 1) % 5 == 0 or epoch == 0:
-                print(f"Epoch {epoch+1}/{epochs} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+                val_acc = correct / max(total_samples, 1) * 100
+                avg_val_ce = total_val_ce / len(val_loader)
+                print(f"Epoch {epoch+1}/{epochs} | Train: {avg_train_loss:.4f} (CE: {avg_ce_loss:.4f}) | Val: {avg_val_loss:.4f} (CE: {avg_val_ce:.4f}) | Val Acc: {val_acc:.1f}%")
 
         return self.history['train_loss'][-1], self.history['val_loss'][-1]
 
@@ -254,13 +292,13 @@ class PricePredictor:
         X1d = torch.FloatTensor(X1d[-1:]).to(self.device)
         
         with torch.no_grad():
-            _, _, c_over = self.model(X1, X4, X1d)
-            c_probs = c_over.cpu().numpy()
+            _, _, _, logits = self.model(X1, X4, X1d)
+            probs = torch.softmax(logits, dim=1).cpu().numpy()
             
-        final_probs = self._apply_voting(c_probs)
-        return final_probs[0, 0], final_probs[0, 1], final_probs[0, 2]
+        return probs[0, 0], probs[0, 1], probs[0, 2]
 
     def predict_batch(self, dfs, batch_size=512):
+        """Returns (N, 30) raw micro-cluster probs for building the voting map."""
         self.model.eval()
         df_1h, df_4h, df_1d = dfs
         result = self.create_sequences(df_1h, df_4h, df_1d)
@@ -279,16 +317,41 @@ class PricePredictor:
         all_probs = []
         with torch.no_grad():
             for b_x1, b_x4, b_x1d in loader:
-                _, _, c_over = self.model(b_x1, b_x4, b_x1d)
+                _, _, c_over, _ = self.model(b_x1, b_x4, b_x1d)
                 all_probs.append(c_over.cpu().numpy())
                 
         c_probs = np.concatenate(all_probs, axis=0)
-        return c_probs # return raw 30-dim for building the map, or we can apply it.
-        # Wait, if we return c_probs, we can build the map. We need another method for voting.
+        return c_probs
         
+    def predict_batch_classified(self, dfs, batch_size=512):
+        """Returns (N, 3) softmax probabilities from the classification head."""
+        self.model.eval()
+        df_1h, df_4h, df_1d = dfs
+        result = self.create_sequences(df_1h, df_4h, df_1d)
+        X1, X4, X1d = result[0], result[1], result[2]
+        
+        if len(X1) == 0:
+            return np.array([])
+            
+        X1 = torch.FloatTensor(X1).to(self.device)
+        X4 = torch.FloatTensor(X4).to(self.device)
+        X1d = torch.FloatTensor(X1d).to(self.device)
+        
+        dataset = torch.utils.data.TensorDataset(X1, X4, X1d)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
+        
+        all_probs = []
+        with torch.no_grad():
+            for b_x1, b_x4, b_x1d in loader:
+                _, _, _, logits = self.model(b_x1, b_x4, b_x1d)
+                probs = torch.softmax(logits, dim=1)
+                all_probs.append(probs.cpu().numpy())
+                
+        return np.concatenate(all_probs, axis=0)
+
     def predict_batch_voted(self, dfs, batch_size=512):
-        c_probs = self.predict_batch(dfs, batch_size)
-        return self._apply_voting(c_probs)
+        """Use classification head directly (bypasses cluster voting)."""
+        return self.predict_batch_classified(dfs, batch_size)
 
     def save(self, path):
         torch.save(self.model.state_dict(), path)
