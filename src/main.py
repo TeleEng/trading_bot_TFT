@@ -64,7 +64,7 @@ def main():
     train_score, val_score = model.train(
         (train_1h, df_4h, df_1d),
         (val_1h, df_4h, df_1d),
-        epochs=20
+        epochs=150
     )
     print(f"Final InfoNCE Loss - Train: {train_score:.4f} | Val: {val_score:.4f}")
 
@@ -74,7 +74,7 @@ def main():
     macro_labels = agg.fit_predict(W) # (30,)
     
     # Get raw 30-dim predictions AND aligned labels from create_sequences
-    train_result = model.create_sequences(train_1h, df_4h, df_1d)
+    train_result = model.create_sequences(train_1h, df_4h, df_1d, clean_noise=True)
     X1_t, X4_t, X1d_t, y_train = train_result[0], train_result[1], train_result[2], train_result[3]
     
     # Run batch prediction on training data (pass full DataFrames, including target)

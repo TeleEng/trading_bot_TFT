@@ -136,7 +136,7 @@ class PricePredictor:
         self.history = {'train_loss': [], 'val_loss': []}
         self.augmenter = TimeSeriesAugmenter(self.device)
 
-    def create_sequences(self, df_1h, df_4h, df_1d):
+    def create_sequences(self, df_1h, df_4h, df_1d, clean_noise=False):
         features_1h = df_1h.drop(columns=['target'], errors='ignore').values
         features_4h = df_4h.drop(columns=['target'], errors='ignore').values
         features_1d = df_1d.drop(columns=['target'], errors='ignore').values
@@ -159,28 +159,35 @@ class PricePredictor:
                 if target is not None:
                     y.append(target[i])
                     
+        X_1h, X_4h, X_1d = np.array(X_1h), np.array(X_4h), np.array(X_1d)
+        
         if target is not None:
-            return np.array(X_1h), np.array(X_4h), np.array(X_1d), np.array(y)
-        return np.array(X_1h), np.array(X_4h), np.array(X_1d)
+            y = np.array(y)
+            if clean_noise:
+                print("Applying EditedNearestNeighbours to clean noise...")
+                X_enn = X_1h.reshape(X_1h.shape[0], -1)
+                X_enn = np.nan_to_num(X_enn, nan=0.0)
+                enn = EditedNearestNeighbours(n_neighbors=5, kind_sel='all')
+                enn.fit_resample(X_enn, y)
+                keep_idx = enn.sample_indices_
+                
+                noisy_samples = len(y) - len(keep_idx)
+                print(f"Relabeled {noisy_samples} noisy/contradictory samples as 'Flat' (0) out of {len(y)}")
+                
+                noisy_mask = np.ones(len(y), dtype=bool)
+                noisy_mask[keep_idx] = False
+                y[noisy_mask] = 0
+                
+            return X_1h, X_4h, X_1d, y
+            
+        return X_1h, X_4h, X_1d
 
     def train(self, dfs_train, dfs_val, epochs=50, batch_size=256):
         df_1h_t, df_4h_t, df_1d_t = dfs_train
         df_1h_v, df_4h_v, df_1d_v = dfs_val
 
-        X1_t, X4_t, X1d_t, y_t = self.create_sequences(df_1h_t, df_4h_t, df_1d_t)
-        
-        # Apply ENN to clean noisy data from training set
-        print("Applying EditedNearestNeighbours to clean training noise...")
-        X_enn = X1_t.reshape(X1_t.shape[0], -1)
-        X_enn = np.nan_to_num(X_enn, nan=0.0)
-        enn = EditedNearestNeighbours(n_neighbors=5, kind_sel='all')
-        enn.fit_resample(X_enn, y_t)
-        
-        keep_idx = enn.sample_indices_
-        print(f"Removed {len(y_t) - len(keep_idx)} noisy samples out of {len(y_t)}")
-        X1_t, X4_t, X1d_t, y_t = X1_t[keep_idx], X4_t[keep_idx], X1d_t[keep_idx], y_t[keep_idx]
-        
-        X1_v, X4_v, X1d_v, y_v = self.create_sequences(df_1h_v, df_4h_v, df_1d_v)
+        X1_t, X4_t, X1d_t, y_t = self.create_sequences(df_1h_t, df_4h_t, df_1d_t, clean_noise=True)
+        X1_v, X4_v, X1d_v, y_v = self.create_sequences(df_1h_v, df_4h_v, df_1d_v, clean_noise=False)
 
         X1_t = torch.FloatTensor(X1_t).to(self.device)
         X4_t = torch.FloatTensor(X4_t).to(self.device)
