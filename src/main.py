@@ -49,7 +49,7 @@ def main():
         print(f"[ERROR] MTF files not found. Did you run preprocess.py?")
         sys.exit(1)
         
-    df_1h = pd.read_csv(file_1h, index_col=0, parse_dates=True).iloc[-10_000:]
+    df_1h = pd.read_csv(file_1h, index_col=0, parse_dates=True)
     df_4h = pd.read_csv(file_4h, index_col=0, parse_dates=True)
     df_1d = pd.read_csv(file_1d, index_col=0, parse_dates=True)
     

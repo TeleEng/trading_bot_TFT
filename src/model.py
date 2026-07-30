@@ -11,6 +11,7 @@ from pathlib import Path
 
 from augment import TimeSeriesAugmenter
 from loss import SupervisedContrastiveClusteringLoss
+from imblearn.under_sampling import EditedNearestNeighbours
 
 class InstanceNormalization1D(nn.Module):
     def __init__(self, eps=1e-5):
@@ -167,6 +168,18 @@ class PricePredictor:
         df_1h_v, df_4h_v, df_1d_v = dfs_val
 
         X1_t, X4_t, X1d_t, y_t = self.create_sequences(df_1h_t, df_4h_t, df_1d_t)
+        
+        # Apply ENN to clean noisy data from training set
+        print("Applying EditedNearestNeighbours to clean training noise...")
+        X_enn = X1_t.reshape(X1_t.shape[0], -1)
+        X_enn = np.nan_to_num(X_enn, nan=0.0)
+        enn = EditedNearestNeighbours(n_neighbors=5, kind_sel='all')
+        enn.fit_resample(X_enn, y_t)
+        
+        keep_idx = enn.sample_indices_
+        print(f"Removed {len(y_t) - len(keep_idx)} noisy samples out of {len(y_t)}")
+        X1_t, X4_t, X1d_t, y_t = X1_t[keep_idx], X4_t[keep_idx], X1d_t[keep_idx], y_t[keep_idx]
+        
         X1_v, X4_v, X1d_v, y_v = self.create_sequences(df_1h_v, df_4h_v, df_1d_v)
 
         X1_t = torch.FloatTensor(X1_t).to(self.device)
