@@ -2,13 +2,13 @@
  "cells": [
   {
    "cell_type": "markdown",
-   "id": "b1a39b44",
+   "id": "17bcc736",
    "metadata": {
     "papermill": {
-     "duration": 0.001845,
-     "end_time": "2026-07-31T15:17:06.286806+00:00",
+     "duration": 0.001875,
+     "end_time": "2026-07-31T19:47:22.713811+00:00",
      "exception": false,
-     "start_time": "2026-07-31T15:17:06.284961+00:00",
+     "start_time": "2026-07-31T19:47:22.711936+00:00",
      "status": "completed"
     },
     "tags": []
@@ -21,22 +21,22 @@
   {
    "cell_type": "code",
    "execution_count": 1,
-   "id": "73270d3a",
+   "id": "f3049284",
    "metadata": {
     "execution": {
-     "iopub.execute_input": "2026-07-31T15:17:06.290526Z",
-     "iopub.status.busy": "2026-07-31T15:17:06.289860Z",
-     "iopub.status.idle": "2026-07-31T15:17:16.265335Z",
-     "shell.execute_reply": "2026-07-31T15:17:16.264322Z"
+     "iopub.execute_input": "2026-07-31T19:47:22.717759Z",
+     "iopub.status.busy": "2026-07-31T19:47:22.717460Z",
+     "iopub.status.idle": "2026-07-31T19:47:35.345067Z",
+     "shell.execute_reply": "2026-07-31T19:47:35.344239Z"
     },
     "jupyter": {
      "source_hidden": true
     },
     "papermill": {
-     "duration": 9.979216,
-     "end_time": "2026-07-31T15:17:16.267281+00:00",
+     "duration": 12.63163,
+     "end_time": "2026-07-31T19:47:35.346773+00:00",
      "exception": false,
-     "start_time": "2026-07-31T15:17:06.288065+00:00",
+     "start_time": "2026-07-31T19:47:22.715143+00:00",
      "status": "completed"
     },
     "tags": []
@@ -51,22 +51,24 @@
   {
    "cell_type": "code",
    "execution_count": 2,
-   "id": "71111222",
+   "id": "e4fc135c",
    "metadata": {
+    "collapsed": true,
     "execution": {
-     "iopub.execute_input": "2026-07-31T15:17:16.271506Z",
-     "iopub.status.busy": "2026-07-31T15:17:16.270960Z",
-     "iopub.status.idle": "2026-07-31T15:17:18.341786Z",
-     "shell.execute_reply": "2026-07-31T15:17:18.341025Z"
+     "iopub.execute_input": "2026-07-31T19:47:35.350721Z",
+     "iopub.status.busy": "2026-07-31T19:47:35.350485Z",
+     "iopub.status.idle": "2026-07-31T19:47:36.807852Z",
+     "shell.execute_reply": "2026-07-31T19:47:36.807003Z"
     },
     "jupyter": {
+     "outputs_hidden": true,
      "source_hidden": true
     },
     "papermill": {
-     "duration": 2.074946,
-     "end_time": "2026-07-31T15:17:18.343523+00:00",
+     "duration": 1.461318,
+     "end_time": "2026-07-31T19:47:36.809417+00:00",
      "exception": false,
-     "start_time": "2026-07-31T15:17:16.268577+00:00",
+     "start_time": "2026-07-31T19:47:35.348099+00:00",
      "status": "completed"
     },
     "tags": []
@@ -77,12 +79,12 @@
      "output_type": "stream",
      "text": [
       "Cloning into '/kaggle/working/temp_repo'...\r\n",
-      "remote: Enumerating objects: 171, done.\u001b[K\r\n",
-      "remote: Counting objects: 100% (171/171), done.\u001b[K\r\n",
-      "remote: Compressing objects: 100% (121/121), done.\u001b[K\r\n",
-      "remote: Total 171 (delta 79), reused 129 (delta 44), pack-reused 0 (from 0)\u001b[K\r\n",
-      "Receiving objects: 100% (171/171), 323.50 KiB | 2.86 MiB/s, done.\r\n",
-      "Resolving deltas: 100% (79/79), done.\r\n"
+      "remote: Enumerating objects: 186, done.\u001b[K\r\n",
+      "remote: Counting objects: 100% (186/186), done.\u001b[K\r\n",
+      "remote: Compressing objects: 100% (135/135), done.\u001b[K\r\n",
+      "remote: Total 186 (delta 88), reused 134 (delta 45), pack-reused 0 (from 0)\u001b[K\r\n",
+      "Receiving objects: 100% (186/186), 331.72 KiB | 2.72 MiB/s, done.\r\n",
+      "Resolving deltas: 100% (88/88), done.\r\n"
      ]
     }
    ],
@@ -96,22 +98,24 @@
   {
    "cell_type": "code",
    "execution_count": 3,
-   "id": "f1f88853",
+   "id": "8dc193bc",
    "metadata": {
+    "collapsed": true,
     "execution": {
-     "iopub.execute_input": "2026-07-31T15:17:18.348252Z",
-     "iopub.status.busy": "2026-07-31T15:17:18.348023Z",
-     "iopub.status.idle": "2026-07-31T15:17:23.220502Z",
-     "shell.execute_reply": "2026-07-31T15:17:23.219757Z"
+     "iopub.execute_input": "2026-07-31T19:47:36.814295Z",
+     "iopub.status.busy": "2026-07-31T19:47:36.813912Z",
+     "iopub.status.idle": "2026-07-31T19:47:41.734806Z",
+     "shell.execute_reply": "2026-07-31T19:47:41.734063Z"
     },
     "jupyter": {
+     "outputs_hidden": true,
      "source_hidden": true
     },
     "papermill": {
-     "duration": 4.876932,
-     "end_time": "2026-07-31T15:17:23.222178+00:00",
+     "duration": 4.925395,
+     "end_time": "2026-07-31T19:47:41.736440+00:00",
      "exception": false,
-     "start_time": "2026-07-31T15:17:18.345246+00:00",
+     "start_time": "2026-07-31T19:47:36.811045+00:00",
      "status": "completed"
     },
     "tags": []
@@ -194,19 +198,19 @@
   {
    "cell_type": "code",
    "execution_count": 4,
-   "id": "61def2a3",
+   "id": "17f81fb2",
    "metadata": {
     "execution": {
-     "iopub.execute_input": "2026-07-31T15:17:23.228296Z",
-     "iopub.status.busy": "2026-07-31T15:17:23.227646Z",
-     "iopub.status.idle": "2026-07-31T17:13:59.987324Z",
-     "shell.execute_reply": "2026-07-31T17:13:59.986559Z"
+     "iopub.execute_input": "2026-07-31T19:47:41.745523Z",
+     "iopub.status.busy": "2026-07-31T19:47:41.744762Z",
+     "iopub.status.idle": "2026-07-31T20:08:45.301832Z",
+     "shell.execute_reply": "2026-07-31T20:08:45.300967Z"
     },
     "papermill": {
-     "duration": 6996.764835,
-     "end_time": "2026-07-31T17:13:59.989300+00:00",
+     "duration": 1263.56506,
+     "end_time": "2026-07-31T20:08:45.303734+00:00",
      "exception": false,
-     "start_time": "2026-07-31T15:17:23.224465+00:00",
+     "start_time": "2026-07-31T19:47:41.738674+00:00",
      "status": "completed"
     },
     "tags": []
@@ -235,66 +239,70 @@
       "[Phase 2] Loading MTF Data & Splitting (60/20/20)...\r\n",
       "\r\n",
       "[Phase 3] Supervised Contrastive Training (MTF)...\r\n",
-      "Applying EditedNearestNeighbours to clean noise...\r\n",
-      "Relabeled 34161 noisy/contradictory samples as 'Flat' (0) out of 49412\r\n",
-      "Class weights: [0.21579829 0.6997199  2.0844817 ]\r\n",
+      "Applying PyTorch Multi-Timeframe ENN to clean noise...\r\n",
+      "Running PyTorch ENN on cuda with 49412 samples in batches of 2048...\r\n",
+      "Relabeled 40586 noisy/contradictory samples as 'Flat' (0) out of 49412\r\n",
+      "Class weights: [0.03552981 2.7013955  0.26307467]\r\n",
       "Starting MTF Supervised Contrastive + Classification Training...\r\n",
-      "Epoch 1/150 | Train: 7.2342 (CE: 1.0958) | Val: 7.4259 (CE: 1.0962) | Val Acc: 38.8%\r\n",
-      "Epoch 5/150 | Train: 7.0427 (CE: 1.0354) | Val: 7.2811 (CE: 1.0832) | Val Acc: 47.2%\r\n",
-      "Epoch 10/150 | Train: 6.9581 (CE: 0.9568) | Val: 7.6866 (CE: 1.4545) | Val Acc: 40.8%\r\n",
-      "Epoch 15/150 | Train: 6.8221 (CE: 0.8297) | Val: 7.7348 (CE: 1.4996) | Val Acc: 45.0%\r\n",
-      "Epoch 20/150 | Train: 6.6769 (CE: 0.7033) | Val: 8.4281 (CE: 2.1166) | Val Acc: 42.7%\r\n",
-      "Epoch 25/150 | Train: 6.5309 (CE: 0.5888) | Val: 9.1593 (CE: 2.8696) | Val Acc: 42.3%\r\n",
-      "Epoch 30/150 | Train: 6.4086 (CE: 0.5011) | Val: 10.0229 (CE: 3.6980) | Val Acc: 41.6%\r\n",
-      "Epoch 35/150 | Train: 6.3244 (CE: 0.4469) | Val: 11.0615 (CE: 4.7310) | Val Acc: 39.7%\r\n",
-      "Epoch 40/150 | Train: 6.2518 (CE: 0.4019) | Val: 12.2497 (CE: 5.8948) | Val Acc: 38.9%\r\n",
-      "Epoch 45/150 | Train: 6.1943 (CE: 0.3717) | Val: 12.5588 (CE: 6.1829) | Val Acc: 39.0%\r\n",
-      "Epoch 50/150 | Train: 6.1422 (CE: 0.3412) | Val: 13.6466 (CE: 7.2726) | Val Acc: 38.3%\r\n",
-      "Epoch 55/150 | Train: 6.1010 (CE: 0.3210) | Val: 13.2154 (CE: 6.8269) | Val Acc: 37.7%\r\n",
-      "Epoch 60/150 | Train: 6.0617 (CE: 0.3025) | Val: 13.6028 (CE: 7.2123) | Val Acc: 37.2%\r\n",
-      "Epoch 65/150 | Train: 6.0156 (CE: 0.2795) | Val: 14.3726 (CE: 7.9718) | Val Acc: 36.0%\r\n",
-      "Epoch 70/150 | Train: 5.9789 (CE: 0.2630) | Val: 14.2857 (CE: 7.9004) | Val Acc: 35.9%\r\n",
-      "Epoch 75/150 | Train: 5.9508 (CE: 0.2497) | Val: 14.5643 (CE: 8.1588) | Val Acc: 36.3%\r\n",
-      "Epoch 80/150 | Train: 5.9243 (CE: 0.2392) | Val: 14.9858 (CE: 8.5565) | Val Acc: 35.6%\r\n",
-      "Epoch 85/150 | Train: 5.9007 (CE: 0.2289) | Val: 15.5862 (CE: 9.1331) | Val Acc: 36.2%\r\n",
-      "Epoch 90/150 | Train: 5.8722 (CE: 0.2177) | Val: 15.7371 (CE: 9.3003) | Val Acc: 34.5%\r\n",
-      "Epoch 95/150 | Train: 5.8375 (CE: 0.2018) | Val: 15.7574 (CE: 9.3125) | Val Acc: 35.2%\r\n",
-      "Epoch 100/150 | Train: 5.8215 (CE: 0.1962) | Val: 15.8524 (CE: 9.3644) | Val Acc: 34.6%\r\n",
-      "Epoch 105/150 | Train: 5.7992 (CE: 0.1870) | Val: 16.7053 (CE: 10.1958) | Val Acc: 35.0%\r\n",
-      "Epoch 110/150 | Train: 5.7806 (CE: 0.1784) | Val: 16.9919 (CE: 10.5195) | Val Acc: 35.2%\r\n",
-      "Epoch 115/150 | Train: 5.7578 (CE: 0.1715) | Val: 17.3705 (CE: 10.8887) | Val Acc: 34.3%\r\n",
-      "Epoch 120/150 | Train: 5.7435 (CE: 0.1648) | Val: 17.6570 (CE: 11.1684) | Val Acc: 33.7%\r\n",
-      "Epoch 125/150 | Train: 5.7244 (CE: 0.1585) | Val: 17.9528 (CE: 11.4088) | Val Acc: 34.5%\r\n",
-      "Epoch 130/150 | Train: 5.7099 (CE: 0.1539) | Val: 16.5083 (CE: 9.9966) | Val Acc: 34.8%\r\n",
-      "Epoch 135/150 | Train: 5.6986 (CE: 0.1488) | Val: 16.7169 (CE: 10.1910) | Val Acc: 34.5%\r\n",
-      "Epoch 140/150 | Train: 5.6852 (CE: 0.1441) | Val: 16.6180 (CE: 10.0944) | Val Acc: 34.3%\r\n",
-      "Epoch 145/150 | Train: 5.6651 (CE: 0.1379) | Val: 16.9616 (CE: 10.4108) | Val Acc: 34.1%\r\n",
-      "Epoch 150/150 | Train: 5.6629 (CE: 0.1378) | Val: 16.3251 (CE: 9.8001) | Val Acc: 34.0%\r\n",
-      "Final InfoNCE Loss - Train: 5.6629 | Val: 16.3251\r\n",
+      "Epoch 1/150 | Train: 7.2959 (CE: 1.1014) | Val: 8.4801 (CE: 1.2668) | Val Acc: 37.6%\r\n",
+      "Epoch 5/150 | Train: 7.0534 (CE: 1.0310) | Val: 8.5757 (CE: 1.4391) | Val Acc: 34.9%\r\n",
+      "Epoch 10/150 | Train: 6.8198 (CE: 0.8033) | Val: 9.4831 (CE: 2.2826) | Val Acc: 40.8%\r\n",
+      "Epoch 15/150 | Train: 6.6631 (CE: 0.6493) | Val: 10.8152 (CE: 3.6453) | Val Acc: 47.1%\r\n",
+      "Epoch 20/150 | Train: 6.5545 (CE: 0.5463) | Val: 12.5497 (CE: 5.3943) | Val Acc: 46.5%\r\n",
+      "Early stopping triggered at epoch 22!\r\n",
+      "Restored best model from early stopping checkpoint.\r\n",
+      "Final InfoNCE Loss - Train: 6.5227 | Val: 8.3529\r\n",
       "\r\n",
       "[Phase 3.5] Building Cluster Voting Map via Agglomerative Clustering...\r\n",
-      "Applying EditedNearestNeighbours to clean noise...\r\n",
-      "Relabeled 34161 noisy/contradictory samples as 'Flat' (0) out of 49412\r\n",
+      "Applying PyTorch Multi-Timeframe ENN to clean noise...\r\n",
+      "Running PyTorch ENN on cuda with 49412 samples in batches of 2048...\r\n",
+      "Relabeled 40586 noisy/contradictory samples as 'Flat' (0) out of 49412\r\n",
       "  train_c_probs shape: (49412, 6), y_train shape: (49412,)\r\n",
-      "  Label distribution in y_train: {np.float64(0.0): np.int64(34996), np.float64(1.0): np.int64(10793), np.float64(2.0): np.int64(3623)}\r\n",
+      "  Label distribution in y_train: {np.float64(0.0): np.int64(43034), np.float64(1.0): np.int64(566), np.float64(2.0): np.int64(5812)}\r\n",
       "Macro-Cluster to Triple Barrier Label Mapping: {0: 0, 1: 0, 2: 0}\r\n",
       "Model saved to /kaggle/working/trading_bot_TFT/models/model.pkl\r\n",
       "\r\n",
       "[Phase 4] Generating t-SNE & Confusion Matrix...\r\n",
+      "Evaluating Best Model on Validation Set...\r\n",
+      "\r\n",
+      "--- Validation Confusion Matrix ---\r\n",
+      "[[1731 1498 2313]\r\n",
+      " [1217 1285 1874]\r\n",
+      " [3223 2873 4493]]\r\n",
+      "\r\n",
+      "--- Validation Classification Report ---\r\n",
+      "              precision    recall  f1-score   support\r\n",
+      "\r\n",
+      "        Flat       0.28      0.31      0.30      5542\r\n",
+      "          Up       0.23      0.29      0.26      4376\r\n",
+      "        Down       0.52      0.42      0.47     10589\r\n",
+      "\r\n",
+      "    accuracy                           0.37     20507\r\n",
+      "   macro avg       0.34      0.34      0.34     20507\r\n",
+      "weighted avg       0.39      0.37      0.38     20507\r\n",
+      "\r\n",
       "Skipped t-SNE due to MTF signature mismatch (will update later).\r\n",
       "\r\n",
       "[Phase 5] Running out-of-sample backtest with 3-of-5 signal buffer...\r\n",
       "Starting Multi-Class Dynamic ATR Backtest...\r\n",
-      "Traceback (most recent call last):\r\n",
-      "  File \"/kaggle/working/trading_bot_TFT/src/main.py\", line 155, in <module>\r\n",
-      "    main()\r\n",
-      "  File \"/kaggle/working/trading_bot_TFT/src/main.py\", line 138, in main\r\n",
-      "    backtest_results = backtester.run((test_1h, df_4h, df_1d, df_1w))\r\n",
-      "                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\r\n",
-      "  File \"/kaggle/working/trading_bot_TFT/src/backtest.py\", line 39, in run\r\n",
-      "    df_1h, df_4h, df_1d = data_source\r\n",
-      "    ^^^^^^^^^^^^^^^^^^^\r\n",
-      "ValueError: too many values to unpack (expected 3)\r\n"
+      "Precomputing MTF batched GPU predictions with Voting...\r\n",
+      "\r\n",
+      "==================================================\r\n",
+      "BACKTEST PERFORMANCE REPORT\r\n",
+      "==================================================\r\n",
+      "Total Return (%): -100.00%\r\n",
+      "Sharpe Ratio: -2.22\r\n",
+      "Max Drawdown (%): -100.00%\r\n",
+      "Win Rate (%): 44.60%\r\n",
+      "Final Value: 0.37\r\n",
+      "Total Trades: 2112.00\r\n",
+      "==================================================\r\n",
+      "\r\n",
+      "Generating performance visualization...\r\n",
+      "\r\n",
+      "============================================================\r\n",
+      "PIPELINE COMPLETE!\r\n",
+      "============================================================\r\n"
      ]
     }
    ],
@@ -325,14 +333,14 @@
   },
   "papermill": {
    "default_parameters": {},
-   "duration": 7016.127193,
-   "end_time": "2026-07-31T17:14:00.210997+00:00",
+   "duration": 1285.058128,
+   "end_time": "2026-07-31T20:08:45.524260+00:00",
    "environment_variables": {},
    "exception": null,
    "input_path": "__notebook__.ipynb",
    "output_path": "__notebook__.ipynb",
    "parameters": {},
-   "start_time": "2026-07-31T15:17:04.083804+00:00",
+   "start_time": "2026-07-31T19:47:20.466132+00:00",
    "version": "2.7.0"
   }
  },
