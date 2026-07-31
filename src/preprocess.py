@@ -140,7 +140,9 @@ def generate_timeframe_data(timeframe_str, is_base=False):
         raise ValueError(f"No CSV files found in {DATA_PATH}")
 
     resample_freq = timeframe_str.lower().replace('m', 'min')
-
+    if resample_freq == '1w':
+        resample_freq = '1W'
+        
     main_df = None
     exogenous_dfs = []
 
@@ -193,6 +195,7 @@ def process_all_data():
     generate_timeframe_data("1h", is_base=True)
     generate_timeframe_data("4h", is_base=False)
     generate_timeframe_data("1d", is_base=False)
+    generate_timeframe_data("1w", is_base=False)
     print(f"\n[OK] MTF Pipeline Complete!")
 
 if __name__ == "__main__":

@@ -45,10 +45,12 @@ def main():
         file_1h = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master_1h.csv"
         file_4h = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master_4h.csv"
         file_1d = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master_1d.csv"
+        file_1w = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master_1w.csv"
         
         df_1h = pd.read_csv(file_1h, index_col=0, parse_dates=True)
         df_4h = pd.read_csv(file_4h, index_col=0, parse_dates=True)
         df_1d = pd.read_csv(file_1d, index_col=0, parse_dates=True)
+        df_1w = pd.read_csv(file_1w, index_col=0, parse_dates=True)
     except FileNotFoundError:
         print("[INFO] Local MTF files not found. Attempting to load from Kaggle dataset...")
         kaggle_base = Path("/kaggle/input/datasets/infernalss/tft-pipeline-dataset/trading_bot_TFT/data/processed")
@@ -58,10 +60,12 @@ def main():
         file_1h = kaggle_base / f"{MAIN_ASSET}_master_1h.csv"
         file_4h = kaggle_base / f"{MAIN_ASSET}_master_4h.csv"
         file_1d = kaggle_base / f"{MAIN_ASSET}_master_1d.csv"
+        file_1w = kaggle_base / f"{MAIN_ASSET}_master_1w.csv"
         
         df_1h = pd.read_csv(file_1h, index_col=0, parse_dates=True)
         df_4h = pd.read_csv(file_4h, index_col=0, parse_dates=True)
         df_1d = pd.read_csv(file_1d, index_col=0, parse_dates=True)
+        df_1w = pd.read_csv(file_1w, index_col=0, parse_dates=True)
     
     val_idx = int(len(df_1h) * 0.6)
     test_idx = int(len(df_1h) * 0.8)
@@ -72,23 +76,23 @@ def main():
 
     print("\n[Phase 3] Supervised Contrastive Training (MTF)...")
     train_score, val_score = model.train(
-        (train_1h, df_4h, df_1d),
-        (val_1h, df_4h, df_1d),
+        (train_1h, df_4h, df_1d, df_1w),
+        (val_1h, df_4h, df_1d, df_1w),
         epochs=150
     )
     print(f"Final InfoNCE Loss - Train: {train_score:.4f} | Val: {val_score:.4f}")
 
     print("\n[Phase 3.5] Building Cluster Voting Map via Agglomerative Clustering...")
-    W = model.model.over_cluster_head[3].weight.data.cpu().numpy() # (30, hidden_size)
+    W = model.model.over_cluster_head[3].weight.data.cpu().numpy() # (6, hidden_size)
     agg = AgglomerativeClustering(n_clusters=3)
-    macro_labels = agg.fit_predict(W) # (30,)
+    macro_labels = agg.fit_predict(W) # (6,)
     
-    # Get raw 30-dim predictions AND aligned labels from create_sequences
-    train_result = model.create_sequences(train_1h, df_4h, df_1d, clean_noise=True)
-    X1_t, X4_t, X1d_t, y_train = train_result[0], train_result[1], train_result[2], train_result[3]
+    # Get raw 6-dim predictions AND aligned labels from create_sequences
+    train_result = model.create_sequences(train_1h, df_4h, df_1d, df_1w, clean_noise=True)
+    X1_t, X4_t, X1d_t, X1w_t, y_train = train_result[0], train_result[1], train_result[2], train_result[3], train_result[4]
     
     # Run batch prediction on training data (pass full DataFrames, including target)
-    train_c_probs = model.predict_batch((train_1h, df_4h, df_1d)) # (N, 30)
+    train_c_probs = model.predict_batch((train_1h, df_4h, df_1d, df_1w)) # (N, 6)
     train_micro_preds = train_c_probs.argmax(axis=1) # (N,)
     train_macro_preds = np.array([macro_labels[m] for m in train_micro_preds]) # (N,)
     
@@ -108,7 +112,7 @@ def main():
     print(f"Macro-Cluster to Triple Barrier Label Mapping: {macro_to_target}")
     
     voting_map = {}
-    for micro_idx in range(30):
+    for micro_idx in range(6):
         voting_map[micro_idx] = macro_to_target[macro_labels[micro_idx]]
         
     model.set_voting_map(voting_map)
@@ -131,7 +135,7 @@ def main():
     environment = TradingEnvironment(initial_capital=10000)
     backtester = Backtester(model, environment, threshold=0.35, risk_percentage=0.02)
 
-    backtest_results = backtester.run((test_1h, df_4h, df_1d))
+    backtest_results = backtester.run((test_1h, df_4h, df_1d, df_1w))
 
     metrics = PerformanceMetrics.calculate_metrics(
         backtest_results,
