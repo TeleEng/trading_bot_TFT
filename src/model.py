@@ -11,7 +11,7 @@ from pathlib import Path
 
 from augment import TimeSeriesAugmenter
 from loss import SupervisedContrastiveClusteringLoss
-from imblearn.under_sampling import EditedNearestNeighbours
+from pytorch_enn import PyTorchENN
 
 class InstanceNormalization1D(nn.Module):
     def __init__(self, eps=1e-5):
@@ -174,12 +174,29 @@ class PricePredictor:
         if target is not None:
             y = np.array(y)
             if clean_noise:
-                print("Applying EditedNearestNeighbours to clean noise...")
-                X_enn = X_1h.reshape(X_1h.shape[0], -1)
+                print("Applying PyTorch Multi-Timeframe ENN to clean noise...")
+                
+                def scale_and_flatten(X_arr):
+                    # X_arr shape: (N, seq_len, num_features)
+                    # Dynamically scale each window independently
+                    mean = np.mean(X_arr, axis=1, keepdims=True)
+                    std = np.std(X_arr, axis=1, keepdims=True)
+                    std = np.where(std > 1e-4, std, 1.0)
+                    X_scaled = (X_arr - mean) / std
+                    # Flatten
+                    return X_scaled.reshape(X_scaled.shape[0], -1)
+
+                X1_flat = scale_and_flatten(X_1h)
+                X4_flat = scale_and_flatten(X_4h)
+                X1d_flat = scale_and_flatten(X_1d)
+                X1w_flat = scale_and_flatten(X_1w)
+                
+                # Concatenate all 4 scaled timeframes into a massive single feature vector for each sequence
+                X_enn = np.concatenate([X1_flat, X4_flat, X1d_flat, X1w_flat], axis=1)
                 X_enn = np.nan_to_num(X_enn, nan=0.0)
-                enn = EditedNearestNeighbours(n_neighbors=5, kind_sel='all')
-                enn.fit_resample(X_enn, y)
-                keep_idx = enn.sample_indices_
+                
+                enn = PyTorchENN(n_neighbors=5, batch_size=2048, device='cuda')
+                keep_idx = enn.fit_resample(X_enn, y)
                 
                 noisy_samples = len(y) - len(keep_idx)
                 print(f"Relabeled {noisy_samples} noisy/contradictory samples as 'Flat' (0) out of {len(y)}")
