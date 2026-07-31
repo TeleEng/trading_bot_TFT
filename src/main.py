@@ -33,7 +33,7 @@ def main():
 
     print("\n[Phase 1] Downloading & Preprocessing Data...")
     # download_histdata(TICKERS, START_YEAR, END_YEAR, DATA_PATH)
-    # process_all_data()
+    process_all_data()
 
     print("\n[Phase 2] Loading MTF Data & Splitting (60/20/20)...")
     model = PricePredictor()
@@ -41,17 +41,27 @@ def main():
     load_dotenv()
     MAIN_ASSET = os.getenv("MAIN_ASSET", "EURUSD")
     
-    file_1h = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master_1h.csv"
-    file_4h = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master_4h.csv"
-    file_1d = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master_1d.csv"
-    
-    if not file_1h.exists() or not file_4h.exists() or not file_1d.exists():
-        print(f"[ERROR] MTF files not found. Did you run preprocess.py?")
-        sys.exit(1)
+    try:
+        file_1h = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master_1h.csv"
+        file_4h = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master_4h.csv"
+        file_1d = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master_1d.csv"
         
-    df_1h = pd.read_csv(file_1h, index_col=0, parse_dates=True)
-    df_4h = pd.read_csv(file_4h, index_col=0, parse_dates=True)
-    df_1d = pd.read_csv(file_1d, index_col=0, parse_dates=True)
+        df_1h = pd.read_csv(file_1h, index_col=0, parse_dates=True)
+        df_4h = pd.read_csv(file_4h, index_col=0, parse_dates=True)
+        df_1d = pd.read_csv(file_1d, index_col=0, parse_dates=True)
+    except FileNotFoundError:
+        print("[INFO] Local MTF files not found. Attempting to load from Kaggle dataset...")
+        kaggle_base = Path("/kaggle/input/datasets/infernalss/tft-pipeline-dataset/trading_bot_TFT/data/processed")
+        if not kaggle_base.exists():
+            kaggle_base = Path("/kaggle/input/tft-pipeline-dataset/trading_bot_TFT/data/processed")
+            
+        file_1h = kaggle_base / f"{MAIN_ASSET}_master_1h.csv"
+        file_4h = kaggle_base / f"{MAIN_ASSET}_master_4h.csv"
+        file_1d = kaggle_base / f"{MAIN_ASSET}_master_1d.csv"
+        
+        df_1h = pd.read_csv(file_1h, index_col=0, parse_dates=True)
+        df_4h = pd.read_csv(file_4h, index_col=0, parse_dates=True)
+        df_1d = pd.read_csv(file_1d, index_col=0, parse_dates=True)
     
     val_idx = int(len(df_1h) * 0.6)
     test_idx = int(len(df_1h) * 0.8)

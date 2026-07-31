@@ -7,7 +7,23 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_PATH = Path("D:/Work/trading_bot/archive/trading_bot_TFT/data/raw")
+
+local_raw_path = Path("D:/Work/trading_bot/archive/trading_bot_TFT/data/raw")
+kaggle_raw_path1 = Path("/kaggle/input/datasets/infernalss/tft-pipeline-dataset/trading_bot_TFT/data/raw")
+kaggle_raw_path2 = Path("/kaggle/input/tft-pipeline-dataset/trading_bot_TFT/data/raw")
+kaggle_raw_path3 = Path("/kaggle/input/tft-pipeline-dataset/data/raw")
+
+if local_raw_path.exists():
+    DATA_PATH = local_raw_path
+elif kaggle_raw_path1.exists():
+    DATA_PATH = kaggle_raw_path1
+elif kaggle_raw_path2.exists():
+    DATA_PATH = kaggle_raw_path2
+elif kaggle_raw_path3.exists():
+    DATA_PATH = kaggle_raw_path3
+else:
+    DATA_PATH = BASE_DIR / "data" / "raw"
+
 OUTPUT_PATH = BASE_DIR / "data" / "processed"
 TARGET_TIMEFRAME = os.getenv("TARGET_TIMEFRAME", "1h")
 MAIN_ASSET = os.getenv("MAIN_ASSET", "EURUSD")
