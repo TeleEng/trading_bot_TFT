@@ -1,0 +1,341 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "b1a39b44",
+   "metadata": {
+    "papermill": {
+     "duration": 0.001845,
+     "end_time": "2026-07-31T15:17:06.286806+00:00",
+     "exception": false,
+     "start_time": "2026-07-31T15:17:06.284961+00:00",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "source": [
+    "# Trading Bot TFT - Kaggle Runner\n",
+    "Uses the Kaggle dataset for data and GitHub for the latest code."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "73270d3a",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-07-31T15:17:06.290526Z",
+     "iopub.status.busy": "2026-07-31T15:17:06.289860Z",
+     "iopub.status.idle": "2026-07-31T15:17:16.265335Z",
+     "shell.execute_reply": "2026-07-31T15:17:16.264322Z"
+    },
+    "jupyter": {
+     "source_hidden": true
+    },
+    "papermill": {
+     "duration": 9.979216,
+     "end_time": "2026-07-31T15:17:16.267281+00:00",
+     "exception": false,
+     "start_time": "2026-07-31T15:17:06.288065+00:00",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [],
+   "source": [
+    "# 1. Copy the dataset to the working directory (provides the data)\n",
+    "!mkdir -p /kaggle/working/trading_bot_TFT\n",
+    "!cp -r /kaggle/input/datasets/infernalss/tft-pipeline-dataset/trading_bot_TFT/* /kaggle/working/trading_bot_TFT/\n"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "id": "71111222",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-07-31T15:17:16.271506Z",
+     "iopub.status.busy": "2026-07-31T15:17:16.270960Z",
+     "iopub.status.idle": "2026-07-31T15:17:18.341786Z",
+     "shell.execute_reply": "2026-07-31T15:17:18.341025Z"
+    },
+    "jupyter": {
+     "source_hidden": true
+    },
+    "papermill": {
+     "duration": 2.074946,
+     "end_time": "2026-07-31T15:17:18.343523+00:00",
+     "exception": false,
+     "start_time": "2026-07-31T15:17:16.268577+00:00",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Cloning into '/kaggle/working/temp_repo'...\r\n",
+      "remote: Enumerating objects: 171, done.\u001b[K\r\n",
+      "remote: Counting objects: 100% (171/171), done.\u001b[K\r\n",
+      "remote: Compressing objects: 100% (121/121), done.\u001b[K\r\n",
+      "remote: Total 171 (delta 79), reused 129 (delta 44), pack-reused 0 (from 0)\u001b[K\r\n",
+      "Receiving objects: 100% (171/171), 323.50 KiB | 2.86 MiB/s, done.\r\n",
+      "Resolving deltas: 100% (79/79), done.\r\n"
+     ]
+    }
+   ],
+   "source": [
+    "# 2. Clone GitHub to a temporary folder and overwrite the code\n",
+    "!git clone https://github.com/TeleEng/trading_bot_TFT.git /kaggle/working/temp_repo\n",
+    "!cp -r -f /kaggle/working/temp_repo/* /kaggle/working/trading_bot_TFT/\n",
+    "!rm -rf /kaggle/working/temp_repo"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "id": "f1f88853",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-07-31T15:17:18.348252Z",
+     "iopub.status.busy": "2026-07-31T15:17:18.348023Z",
+     "iopub.status.idle": "2026-07-31T15:17:23.220502Z",
+     "shell.execute_reply": "2026-07-31T15:17:23.219757Z"
+    },
+    "jupyter": {
+     "source_hidden": true
+    },
+    "papermill": {
+     "duration": 4.876932,
+     "end_time": "2026-07-31T15:17:23.222178+00:00",
+     "exception": false,
+     "start_time": "2026-07-31T15:17:18.345246+00:00",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "Requirement already satisfied: pandas in /usr/local/lib/python3.12/dist-packages (from -r requirements.txt (line 1)) (2.3.3)\r\n",
+      "Requirement already satisfied: numpy in /usr/local/lib/python3.12/dist-packages (from -r requirements.txt (line 2)) (2.0.2)\r\n",
+      "Requirement already satisfied: torch in /usr/local/lib/python3.12/dist-packages (from -r requirements.txt (line 3)) (2.10.0+cu128)\r\n",
+      "Collecting histdata (from -r requirements.txt (line 4))\r\n",
+      "  Downloading histdata-1.1-py3-none-any.whl.metadata (4.4 kB)\r\n",
+      "Requirement already satisfied: python-dotenv in /usr/local/lib/python3.12/dist-packages (from -r requirements.txt (line 5)) (1.2.2)\r\n",
+      "Requirement already satisfied: scikit-learn in /usr/local/lib/python3.12/dist-packages (from -r requirements.txt (line 6)) (1.6.1)\r\n",
+      "Requirement already satisfied: matplotlib in /usr/local/lib/python3.12/dist-packages (from -r requirements.txt (line 7)) (3.10.0)\r\n",
+      "Requirement already satisfied: seaborn in /usr/local/lib/python3.12/dist-packages (from -r requirements.txt (line 8)) (0.13.2)\r\n",
+      "Requirement already satisfied: python-dateutil>=2.8.2 in /usr/local/lib/python3.12/dist-packages (from pandas->-r requirements.txt (line 1)) (2.9.0.post0)\r\n",
+      "Requirement already satisfied: pytz>=2020.1 in /usr/local/lib/python3.12/dist-packages (from pandas->-r requirements.txt (line 1)) (2025.2)\r\n",
+      "Requirement already satisfied: tzdata>=2022.7 in /usr/local/lib/python3.12/dist-packages (from pandas->-r requirements.txt (line 1)) (2026.1)\r\n",
+      "Requirement already satisfied: filelock in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (3.29.0)\r\n",
+      "Requirement already satisfied: typing-extensions>=4.10.0 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (4.15.0)\r\n",
+      "Requirement already satisfied: setuptools in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (81.0.0)\r\n",
+      "Requirement already satisfied: sympy>=1.13.3 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (1.14.0)\r\n",
+      "Requirement already satisfied: networkx>=2.5.1 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (3.6.1)\r\n",
+      "Requirement already satisfied: jinja2 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (3.1.6)\r\n",
+      "Requirement already satisfied: fsspec>=0.8.5 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (2025.3.0)\r\n",
+      "Requirement already satisfied: cuda-bindings==12.9.4 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (12.9.4)\r\n",
+      "Requirement already satisfied: nvidia-cuda-nvrtc-cu12==12.8.93 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (12.8.93)\r\n",
+      "Requirement already satisfied: nvidia-cuda-runtime-cu12==12.8.90 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (12.8.90)\r\n",
+      "Requirement already satisfied: nvidia-cuda-cupti-cu12==12.8.90 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (12.8.90)\r\n",
+      "Requirement already satisfied: nvidia-cudnn-cu12==9.10.2.21 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (9.10.2.21)\r\n",
+      "Requirement already satisfied: nvidia-cublas-cu12==12.8.4.1 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (12.8.4.1)\r\n",
+      "Requirement already satisfied: nvidia-cufft-cu12==11.3.3.83 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (11.3.3.83)\r\n",
+      "Requirement already satisfied: nvidia-curand-cu12==10.3.9.90 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (10.3.9.90)\r\n",
+      "Requirement already satisfied: nvidia-cusolver-cu12==11.7.3.90 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (11.7.3.90)\r\n",
+      "Requirement already satisfied: nvidia-cusparse-cu12==12.5.8.93 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (12.5.8.93)\r\n",
+      "Requirement already satisfied: nvidia-cusparselt-cu12==0.7.1 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (0.7.1)\r\n",
+      "Requirement already satisfied: nvidia-nccl-cu12==2.27.5 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (2.27.5)\r\n",
+      "Requirement already satisfied: nvidia-nvshmem-cu12==3.4.5 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (3.4.5)\r\n",
+      "Requirement already satisfied: nvidia-nvtx-cu12==12.8.90 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (12.8.90)\r\n",
+      "Requirement already satisfied: nvidia-nvjitlink-cu12==12.8.93 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (12.8.93)\r\n",
+      "Requirement already satisfied: nvidia-cufile-cu12==1.13.1.3 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (1.13.1.3)\r\n",
+      "Requirement already satisfied: triton==3.6.0 in /usr/local/lib/python3.12/dist-packages (from torch->-r requirements.txt (line 3)) (3.6.0)\r\n",
+      "Requirement already satisfied: cuda-pathfinder~=1.1 in /usr/local/lib/python3.12/dist-packages (from cuda-bindings==12.9.4->torch->-r requirements.txt (line 3)) (1.5.3)\r\n",
+      "Requirement already satisfied: requests in /usr/local/lib/python3.12/dist-packages (from histdata->-r requirements.txt (line 4)) (2.32.4)\r\n",
+      "Requirement already satisfied: beautifulsoup4 in /usr/local/lib/python3.12/dist-packages (from histdata->-r requirements.txt (line 4)) (4.13.5)\r\n",
+      "Requirement already satisfied: scipy>=1.6.0 in /usr/local/lib/python3.12/dist-packages (from scikit-learn->-r requirements.txt (line 6)) (1.16.3)\r\n",
+      "Requirement already satisfied: joblib>=1.2.0 in /usr/local/lib/python3.12/dist-packages (from scikit-learn->-r requirements.txt (line 6)) (1.5.3)\r\n",
+      "Requirement already satisfied: threadpoolctl>=3.1.0 in /usr/local/lib/python3.12/dist-packages (from scikit-learn->-r requirements.txt (line 6)) (3.6.0)\r\n",
+      "Requirement already satisfied: contourpy>=1.0.1 in /usr/local/lib/python3.12/dist-packages (from matplotlib->-r requirements.txt (line 7)) (1.3.3)\r\n",
+      "Requirement already satisfied: cycler>=0.10 in /usr/local/lib/python3.12/dist-packages (from matplotlib->-r requirements.txt (line 7)) (0.12.1)\r\n",
+      "Requirement already satisfied: fonttools>=4.22.0 in /usr/local/lib/python3.12/dist-packages (from matplotlib->-r requirements.txt (line 7)) (4.62.1)\r\n",
+      "Requirement already satisfied: kiwisolver>=1.3.1 in /usr/local/lib/python3.12/dist-packages (from matplotlib->-r requirements.txt (line 7)) (1.5.0)\r\n",
+      "Requirement already satisfied: packaging>=20.0 in /usr/local/lib/python3.12/dist-packages (from matplotlib->-r requirements.txt (line 7)) (26.1)\r\n",
+      "Requirement already satisfied: pillow>=8 in /usr/local/lib/python3.12/dist-packages (from matplotlib->-r requirements.txt (line 7)) (11.3.0)\r\n",
+      "Requirement already satisfied: pyparsing>=2.3.1 in /usr/local/lib/python3.12/dist-packages (from matplotlib->-r requirements.txt (line 7)) (3.3.2)\r\n",
+      "Requirement already satisfied: six>=1.5 in /usr/local/lib/python3.12/dist-packages (from python-dateutil>=2.8.2->pandas->-r requirements.txt (line 1)) (1.17.0)\r\n",
+      "Requirement already satisfied: mpmath<1.4,>=1.1.0 in /usr/local/lib/python3.12/dist-packages (from sympy>=1.13.3->torch->-r requirements.txt (line 3)) (1.3.0)\r\n",
+      "Requirement already satisfied: soupsieve>1.2 in /usr/local/lib/python3.12/dist-packages (from beautifulsoup4->histdata->-r requirements.txt (line 4)) (2.8.3)\r\n",
+      "Requirement already satisfied: MarkupSafe>=2.0 in /usr/local/lib/python3.12/dist-packages (from jinja2->torch->-r requirements.txt (line 3)) (3.0.3)\r\n",
+      "Requirement already satisfied: charset_normalizer<4,>=2 in /usr/local/lib/python3.12/dist-packages (from requests->histdata->-r requirements.txt (line 4)) (3.4.7)\r\n",
+      "Requirement already satisfied: idna<4,>=2.5 in /usr/local/lib/python3.12/dist-packages (from requests->histdata->-r requirements.txt (line 4)) (3.13)\r\n",
+      "Requirement already satisfied: urllib3<3,>=1.21.1 in /usr/local/lib/python3.12/dist-packages (from requests->histdata->-r requirements.txt (line 4)) (2.5.0)\r\n",
+      "Requirement already satisfied: certifi>=2017.4.17 in /usr/local/lib/python3.12/dist-packages (from requests->histdata->-r requirements.txt (line 4)) (2026.4.22)\r\n",
+      "Downloading histdata-1.1-py3-none-any.whl (9.2 kB)\r\n",
+      "Installing collected packages: histdata\r\n",
+      "Successfully installed histdata-1.1\r\n"
+     ]
+    }
+   ],
+   "source": [
+    "# 3. Navigate and Install\n",
+    "import os\n",
+    "os.chdir('/kaggle/working/trading_bot_TFT')\n",
+    "!pip install -r requirements.txt"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "id": "61def2a3",
+   "metadata": {
+    "execution": {
+     "iopub.execute_input": "2026-07-31T15:17:23.228296Z",
+     "iopub.status.busy": "2026-07-31T15:17:23.227646Z",
+     "iopub.status.idle": "2026-07-31T17:13:59.987324Z",
+     "shell.execute_reply": "2026-07-31T17:13:59.986559Z"
+    },
+    "papermill": {
+     "duration": 6996.764835,
+     "end_time": "2026-07-31T17:13:59.989300+00:00",
+     "exception": false,
+     "start_time": "2026-07-31T15:17:23.224465+00:00",
+     "status": "completed"
+    },
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "============================================================\r\n",
+      "TRADING BOT - FULL PIPELINE (SELF-SUPERVISED MTF)\r\n",
+      "============================================================\r\n",
+      "\r\n",
+      "[Phase 1] Downloading & Preprocessing Data...\r\n",
+      "--- Processing 1h Timeframe ---\r\n",
+      "Saved to /kaggle/working/trading_bot_TFT/data/processed/EURUSD_master_1h.csv\r\n",
+      "--- Processing 4h Timeframe ---\r\n",
+      "Saved to /kaggle/working/trading_bot_TFT/data/processed/EURUSD_master_4h.csv\r\n",
+      "--- Processing 1d Timeframe ---\r\n",
+      "Saved to /kaggle/working/trading_bot_TFT/data/processed/EURUSD_master_1d.csv\r\n",
+      "--- Processing 1w Timeframe ---\r\n",
+      "Saved to /kaggle/working/trading_bot_TFT/data/processed/EURUSD_master_1w.csv\r\n",
+      "\r\n",
+      "[OK] MTF Pipeline Complete!\r\n",
+      "\r\n",
+      "[Phase 2] Loading MTF Data & Splitting (60/20/20)...\r\n",
+      "\r\n",
+      "[Phase 3] Supervised Contrastive Training (MTF)...\r\n",
+      "Applying EditedNearestNeighbours to clean noise...\r\n",
+      "Relabeled 34161 noisy/contradictory samples as 'Flat' (0) out of 49412\r\n",
+      "Class weights: [0.21579829 0.6997199  2.0844817 ]\r\n",
+      "Starting MTF Supervised Contrastive + Classification Training...\r\n",
+      "Epoch 1/150 | Train: 7.2342 (CE: 1.0958) | Val: 7.4259 (CE: 1.0962) | Val Acc: 38.8%\r\n",
+      "Epoch 5/150 | Train: 7.0427 (CE: 1.0354) | Val: 7.2811 (CE: 1.0832) | Val Acc: 47.2%\r\n",
+      "Epoch 10/150 | Train: 6.9581 (CE: 0.9568) | Val: 7.6866 (CE: 1.4545) | Val Acc: 40.8%\r\n",
+      "Epoch 15/150 | Train: 6.8221 (CE: 0.8297) | Val: 7.7348 (CE: 1.4996) | Val Acc: 45.0%\r\n",
+      "Epoch 20/150 | Train: 6.6769 (CE: 0.7033) | Val: 8.4281 (CE: 2.1166) | Val Acc: 42.7%\r\n",
+      "Epoch 25/150 | Train: 6.5309 (CE: 0.5888) | Val: 9.1593 (CE: 2.8696) | Val Acc: 42.3%\r\n",
+      "Epoch 30/150 | Train: 6.4086 (CE: 0.5011) | Val: 10.0229 (CE: 3.6980) | Val Acc: 41.6%\r\n",
+      "Epoch 35/150 | Train: 6.3244 (CE: 0.4469) | Val: 11.0615 (CE: 4.7310) | Val Acc: 39.7%\r\n",
+      "Epoch 40/150 | Train: 6.2518 (CE: 0.4019) | Val: 12.2497 (CE: 5.8948) | Val Acc: 38.9%\r\n",
+      "Epoch 45/150 | Train: 6.1943 (CE: 0.3717) | Val: 12.5588 (CE: 6.1829) | Val Acc: 39.0%\r\n",
+      "Epoch 50/150 | Train: 6.1422 (CE: 0.3412) | Val: 13.6466 (CE: 7.2726) | Val Acc: 38.3%\r\n",
+      "Epoch 55/150 | Train: 6.1010 (CE: 0.3210) | Val: 13.2154 (CE: 6.8269) | Val Acc: 37.7%\r\n",
+      "Epoch 60/150 | Train: 6.0617 (CE: 0.3025) | Val: 13.6028 (CE: 7.2123) | Val Acc: 37.2%\r\n",
+      "Epoch 65/150 | Train: 6.0156 (CE: 0.2795) | Val: 14.3726 (CE: 7.9718) | Val Acc: 36.0%\r\n",
+      "Epoch 70/150 | Train: 5.9789 (CE: 0.2630) | Val: 14.2857 (CE: 7.9004) | Val Acc: 35.9%\r\n",
+      "Epoch 75/150 | Train: 5.9508 (CE: 0.2497) | Val: 14.5643 (CE: 8.1588) | Val Acc: 36.3%\r\n",
+      "Epoch 80/150 | Train: 5.9243 (CE: 0.2392) | Val: 14.9858 (CE: 8.5565) | Val Acc: 35.6%\r\n",
+      "Epoch 85/150 | Train: 5.9007 (CE: 0.2289) | Val: 15.5862 (CE: 9.1331) | Val Acc: 36.2%\r\n",
+      "Epoch 90/150 | Train: 5.8722 (CE: 0.2177) | Val: 15.7371 (CE: 9.3003) | Val Acc: 34.5%\r\n",
+      "Epoch 95/150 | Train: 5.8375 (CE: 0.2018) | Val: 15.7574 (CE: 9.3125) | Val Acc: 35.2%\r\n",
+      "Epoch 100/150 | Train: 5.8215 (CE: 0.1962) | Val: 15.8524 (CE: 9.3644) | Val Acc: 34.6%\r\n",
+      "Epoch 105/150 | Train: 5.7992 (CE: 0.1870) | Val: 16.7053 (CE: 10.1958) | Val Acc: 35.0%\r\n",
+      "Epoch 110/150 | Train: 5.7806 (CE: 0.1784) | Val: 16.9919 (CE: 10.5195) | Val Acc: 35.2%\r\n",
+      "Epoch 115/150 | Train: 5.7578 (CE: 0.1715) | Val: 17.3705 (CE: 10.8887) | Val Acc: 34.3%\r\n",
+      "Epoch 120/150 | Train: 5.7435 (CE: 0.1648) | Val: 17.6570 (CE: 11.1684) | Val Acc: 33.7%\r\n",
+      "Epoch 125/150 | Train: 5.7244 (CE: 0.1585) | Val: 17.9528 (CE: 11.4088) | Val Acc: 34.5%\r\n",
+      "Epoch 130/150 | Train: 5.7099 (CE: 0.1539) | Val: 16.5083 (CE: 9.9966) | Val Acc: 34.8%\r\n",
+      "Epoch 135/150 | Train: 5.6986 (CE: 0.1488) | Val: 16.7169 (CE: 10.1910) | Val Acc: 34.5%\r\n",
+      "Epoch 140/150 | Train: 5.6852 (CE: 0.1441) | Val: 16.6180 (CE: 10.0944) | Val Acc: 34.3%\r\n",
+      "Epoch 145/150 | Train: 5.6651 (CE: 0.1379) | Val: 16.9616 (CE: 10.4108) | Val Acc: 34.1%\r\n",
+      "Epoch 150/150 | Train: 5.6629 (CE: 0.1378) | Val: 16.3251 (CE: 9.8001) | Val Acc: 34.0%\r\n",
+      "Final InfoNCE Loss - Train: 5.6629 | Val: 16.3251\r\n",
+      "\r\n",
+      "[Phase 3.5] Building Cluster Voting Map via Agglomerative Clustering...\r\n",
+      "Applying EditedNearestNeighbours to clean noise...\r\n",
+      "Relabeled 34161 noisy/contradictory samples as 'Flat' (0) out of 49412\r\n",
+      "  train_c_probs shape: (49412, 6), y_train shape: (49412,)\r\n",
+      "  Label distribution in y_train: {np.float64(0.0): np.int64(34996), np.float64(1.0): np.int64(10793), np.float64(2.0): np.int64(3623)}\r\n",
+      "Macro-Cluster to Triple Barrier Label Mapping: {0: 0, 1: 0, 2: 0}\r\n",
+      "Model saved to /kaggle/working/trading_bot_TFT/models/model.pkl\r\n",
+      "\r\n",
+      "[Phase 4] Generating t-SNE & Confusion Matrix...\r\n",
+      "Skipped t-SNE due to MTF signature mismatch (will update later).\r\n",
+      "\r\n",
+      "[Phase 5] Running out-of-sample backtest with 3-of-5 signal buffer...\r\n",
+      "Starting Multi-Class Dynamic ATR Backtest...\r\n",
+      "Traceback (most recent call last):\r\n",
+      "  File \"/kaggle/working/trading_bot_TFT/src/main.py\", line 155, in <module>\r\n",
+      "    main()\r\n",
+      "  File \"/kaggle/working/trading_bot_TFT/src/main.py\", line 138, in main\r\n",
+      "    backtest_results = backtester.run((test_1h, df_4h, df_1d, df_1w))\r\n",
+      "                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\r\n",
+      "  File \"/kaggle/working/trading_bot_TFT/src/backtest.py\", line 39, in run\r\n",
+      "    df_1h, df_4h, df_1d = data_source\r\n",
+      "    ^^^^^^^^^^^^^^^^^^^\r\n",
+      "ValueError: too many values to unpack (expected 3)\r\n"
+     ]
+    }
+   ],
+   "source": [
+    "# 4. Run the Pipeline\n",
+    "os.chdir('src')\n",
+    "!python main.py"
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.12.13"
+  },
+  "papermill": {
+   "default_parameters": {},
+   "duration": 7016.127193,
+   "end_time": "2026-07-31T17:14:00.210997+00:00",
+   "environment_variables": {},
+   "exception": null,
+   "input_path": "__notebook__.ipynb",
+   "output_path": "__notebook__.ipynb",
+   "parameters": {},
+   "start_time": "2026-07-31T15:17:04.083804+00:00",
+   "version": "2.7.0"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
