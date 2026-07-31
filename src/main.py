@@ -18,6 +18,7 @@ from performance import PerformanceMetrics
 from viz import plot_tsne_and_confusion_matrix
 
 from sklearn.cluster import AgglomerativeClustering
+from sklearn.metrics import confusion_matrix, classification_report
 
 def main():
     print("="*60)
@@ -126,8 +127,20 @@ def main():
         json.dump(voting_map, f)
 
     print("\n[Phase 4] Generating t-SNE & Confusion Matrix...")
-    # Let's skip visualization for MTF because plot_tsne_and_confusion_matrix expects single dataframe.
-    # plot_tsne_and_confusion_matrix(model, str(test_file), str(results_dir))
+    # Let's evaluate the newly trained and restored best model on the Validation Set
+    print("Evaluating Best Model on Validation Set...")
+    val_c_probs = model.predict_batch_classified((val_1h, df_4h, df_1d, df_1w))
+    if len(val_c_probs) > 0:
+        val_preds = val_c_probs.argmax(axis=1)
+        _, _, _, _, y_val = model.create_sequences(val_1h, df_4h, df_1d, df_1w, clean_noise=False)
+        
+        print("\n--- Validation Confusion Matrix ---")
+        print(confusion_matrix(y_val, val_preds))
+        print("\n--- Validation Classification Report ---")
+        print(classification_report(y_val, val_preds, target_names=["Flat", "Up", "Down"]))
+    else:
+        print("Validation set too small for evaluation.")
+    
     print("Skipped t-SNE due to MTF signature mismatch (will update later).")
 
     print("\n[Phase 5] Running out-of-sample backtest with 3-of-5 signal buffer...")

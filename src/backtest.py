@@ -36,12 +36,12 @@ class Backtester:
             all_probs = self.model.predict_batch(features_df)
         else:
             # Tuple of DataFrames for MTF
-            df_1h, df_4h, df_1d = data_source
+            df_1h, df_4h, df_1d, df_1w = data_source
             df = df_1h
             ticker = MAIN_ASSET
-            features_df = (df_1h.drop(columns=['target'], errors='ignore'), df_4h, df_1d)
+            features_df = (df_1h.drop(columns=['target'], errors='ignore'), df_4h, df_1d, df_1w)
             print("Precomputing MTF batched GPU predictions with Voting...")
-            all_probs = self.model.predict_batch_voted(features_df)
+            all_probs = self.model.predict_batch_classified(features_df)
 
         results = []
         self.environment.reset()

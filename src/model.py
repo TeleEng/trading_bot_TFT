@@ -41,7 +41,7 @@ class VariableSelectionNetwork(nn.Module):
         return x * weights * x.shape[-1]
 
 class MultiTimeframeTFT(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, num_over_clusters=6, dropout=0.2):
+    def __init__(self, input_size, hidden_size, num_layers, num_over_clusters=6, dropout=0.3):
         super(MultiTimeframeTFT, self).__init__()
         self.norm = InstanceNormalization1D()
         
@@ -137,6 +137,8 @@ class PricePredictor:
             raise RuntimeError("GPU requested but CUDA is not available!")
         self.device = torch.device('cuda')
         self.model = None
+        import copy
+        self.copy = copy
         self.history = {'train_loss': [], 'val_loss': []}
         self.augmenter = TimeSeriesAugmenter(self.device)
 
@@ -216,7 +218,7 @@ class PricePredictor:
             num_layers=self.num_layers
         ).to(self.device)
 
-        optimizer = optim.Adam(self.model.parameters(), lr=1e-3)
+        optimizer = optim.Adam(self.model.parameters(), lr=1e-3, weight_decay=1e-4)
         
         train_dataset = torch.utils.data.TensorDataset(X1_t, X4_t, X1d_t, X1w_t, y_t)
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
@@ -236,6 +238,12 @@ class PricePredictor:
         
         print(f"Class weights: {class_weights.cpu().numpy()}")
         print("Starting MTF Supervised Contrastive + Classification Training...")
+        
+        best_val_loss = float('inf')
+        patience = 20
+        patience_counter = 0
+        best_model_state = None
+
         for epoch in range(epochs):
             self.model.train()
             total_loss = 0
@@ -285,16 +293,32 @@ class PricePredictor:
                     preds = logits_i.argmax(dim=1)
                     correct += (preds == b_y).sum().item()
                     total_samples += b_y.size(0)
-            
+                    
             avg_val_loss = total_val_loss / len(val_loader)
+            avg_val_ce = total_val_ce / len(val_loader)
+            val_acc = correct / total_samples
             self.history['val_loss'].append(avg_val_loss)
             
             if (epoch + 1) % 5 == 0 or epoch == 0:
-                val_acc = correct / max(total_samples, 1) * 100
-                avg_val_ce = total_val_ce / len(val_loader)
-                print(f"Epoch {epoch+1}/{epochs} | Train: {avg_train_loss:.4f} (CE: {avg_ce_loss:.4f}) | Val: {avg_val_loss:.4f} (CE: {avg_val_ce:.4f}) | Val Acc: {val_acc:.1f}%")
+                print(f"Epoch {epoch+1}/{epochs} | Train: {avg_train_loss:.4f} (CE: {avg_ce_loss:.4f}) | Val: {avg_val_loss:.4f} (CE: {avg_val_ce:.4f}) | Val Acc: {val_acc*100:.1f}%")
+                
+            # Early Stopping Check
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
+                patience_counter = 0
+                best_model_state = self.copy.deepcopy(self.model.state_dict())
+            else:
+                patience_counter += 1
+                if patience_counter >= patience:
+                    print(f"Early stopping triggered at epoch {epoch+1}!")
+                    break
 
-        return self.history['train_loss'][-1], self.history['val_loss'][-1]
+        # Restore best model
+        if best_model_state is not None:
+            self.model.load_state_dict(best_model_state)
+            print("Restored best model from early stopping checkpoint.")
+
+        return self.history['train_loss'][-1], best_val_loss
 
     def set_voting_map(self, voting_map):
         self.voting_map = voting_map
