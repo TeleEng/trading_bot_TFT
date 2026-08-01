@@ -23,11 +23,8 @@ class TradingEnvironment:
         return cash
 
     def get_fee_rate(self, ticker):
-        """FIX: Dynamic fee structure: lower for Forex, standard for Crypto."""
-        # Simple heuristic to classify the asset class by ticker name
-        if "USD" in ticker and "BTC" not in ticker and "ETH" not in ticker:
-            return 0.0001  # 0.01% representing tight spreads for Forex/Fiat (e.g. EURUSD)
-        return 0.001       # 0.1% representing standard exchange fees for Crypto/Equities
+        """Dynamic fee rate. Can be configured per ticker."""
+        return 0.0001       # 0.01% representing a typical 1 pip Forex spread on EURUSD
 
     def execute_trade(self, ticker, quantity, price, timestamp):
         """Execute a trade (buy/long if positive quantity, sell/short if negative)."""
