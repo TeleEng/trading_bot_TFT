@@ -6,8 +6,9 @@ class PyTorchENN:
     A GPU-accelerated implementation of Edited Nearest Neighbours (ENN).
     Uses batching to prevent VRAM overflow when calculating massive distance matrices.
     """
-    def __init__(self, n_neighbors=5, batch_size=1024, device='cuda'):
+    def __init__(self, n_neighbors=5, kind_sel='all', batch_size=1024, device='cuda'):
         self.n_neighbors = n_neighbors
+        self.kind_sel = kind_sel
         self.batch_size = batch_size
         self.device = device if torch.cuda.is_available() else 'cpu'
 
@@ -45,12 +46,18 @@ class PyTorchENN:
             neighbor_labels = y_tensor[neighbor_idx]
             batch_y = y_tensor[i:end].unsqueeze(1) # shape: (batch_size, 1)
             
-            # kind_sel='all': a sample is kept ONLY if ALL its k neighbors match its label.
-            # If any neighbor disagrees, it is considered noisy and removed.
-            matches = (neighbor_labels == batch_y)
-            all_match = matches.all(dim=1) # shape: (batch_size,)
+            if self.kind_sel == 'all':
+                # kind_sel='all': a sample is kept ONLY if ALL its k neighbors match its label.
+                matches = (neighbor_labels == batch_y)
+                keep = matches.all(dim=1) # shape: (batch_size,)
+            elif self.kind_sel == 'mode':
+                # kind_sel='mode': a sample is kept if the majority of its neighbors match its label.
+                majority_labels = torch.mode(neighbor_labels, dim=1).values
+                keep = (majority_labels == batch_y.squeeze(1))
+            else:
+                raise ValueError("kind_sel must be 'all' or 'mode'")
             
-            keep_mask[i:end] = all_match
+            keep_mask[i:end] = keep
             
         keep_idx = torch.where(keep_mask)[0].cpu().numpy()
         return keep_idx

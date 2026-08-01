@@ -5,5 +5,5 @@ builtins.open = lambda file, mode='r', buffering=-1, encoding=None, errors=None,
 
 from kaggle.cli import main
 
-sys.argv = ['kaggle', 'kernels', 'push', '-p', 'd:/Work/trading_bot/notebooks']
+sys.argv = ['kaggle', 'kernels', 'push', '-p', 'd:/Work/trading_bot/kaggle_pull']
 main()

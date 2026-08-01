@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import confusion_matrix
+from sklearn.metrics import confusion_matrix, f1_score
 import os
 from pathlib import Path
 
@@ -191,11 +191,11 @@ class PricePredictor:
                 X1d_flat = scale_and_flatten(X_1d)
                 X1w_flat = scale_and_flatten(X_1w)
                 
-                # Concatenate all 4 scaled timeframes into a massive single feature vector for each sequence
-                X_enn = np.concatenate([X1_flat, X4_flat, X1d_flat, X1w_flat], axis=1)
+                # Concatenate 1H and 4H scaled timeframes to prevent dimensionality explosion
+                X_enn = np.concatenate([X1_flat, X4_flat], axis=1)
                 X_enn = np.nan_to_num(X_enn, nan=0.0)
                 
-                enn = PyTorchENN(n_neighbors=5, batch_size=2048, device='cuda')
+                enn = PyTorchENN(n_neighbors=5, kind_sel='mode', batch_size=2048, device='cuda')
                 keep_idx = enn.fit_resample(X_enn, y)
                 
                 noisy_samples = len(y) - len(keep_idx)
@@ -256,7 +256,7 @@ class PricePredictor:
         print(f"Class weights: {class_weights.cpu().numpy()}")
         print("Starting MTF Supervised Contrastive + Classification Training...")
         
-        best_val_loss = float('inf')
+        best_val_f1 = -float('inf')
         patience = 20
         patience_counter = 0
         best_model_state = None
@@ -296,6 +296,8 @@ class PricePredictor:
             total_val_ce = 0
             correct = 0
             total_samples = 0
+            all_preds = []
+            all_labels = []
             with torch.no_grad():
                 for b_x1, b_x4, b_x1d, b_x1w, b_y in val_loader:
                     x1_i, x4_i, x1d_i, x1w_i = self.augmenter.augment(b_x1), b_x4, b_x1d, b_x1w
@@ -310,32 +312,40 @@ class PricePredictor:
                     preds = logits_i.argmax(dim=1)
                     correct += (preds == b_y).sum().item()
                     total_samples += b_y.size(0)
+                    all_preds.extend(preds.cpu().numpy())
+                    all_labels.extend(b_y.cpu().numpy())
                     
             avg_val_loss = total_val_loss / len(val_loader)
             avg_val_ce = total_val_ce / len(val_loader)
             val_acc = correct / total_samples
+            val_macro_f1 = f1_score(all_labels, all_preds, average='macro')
             self.history['val_loss'].append(avg_val_loss)
             
             if (epoch + 1) % 5 == 0 or epoch == 0:
-                print(f"Epoch {epoch+1}/{epochs} | Train: {avg_train_loss:.4f} (CE: {avg_ce_loss:.4f}) | Val: {avg_val_loss:.4f} (CE: {avg_val_ce:.4f}) | Val Acc: {val_acc*100:.1f}%")
+                print(f"Epoch {epoch+1}/{epochs} | Train: {avg_train_loss:.4f} (CE: {avg_ce_loss:.4f}) | Val F1: {val_macro_f1:.4f} | Val Acc: {val_acc*100:.1f}%")
                 
-            # Early Stopping Check
-            if avg_val_loss < best_val_loss:
-                best_val_loss = avg_val_loss
+            # Early stopping check based on Macro F1 (higher is better)
+            import copy
+            if val_macro_f1 > best_val_f1:
+                best_val_f1 = val_macro_f1
                 patience_counter = 0
-                best_model_state = self.copy.deepcopy(self.model.state_dict())
+                best_model_state = copy.deepcopy(self.model.state_dict())
             else:
                 patience_counter += 1
-                if patience_counter >= patience:
-                    print(f"Early stopping triggered at epoch {epoch+1}!")
-                    break
+                
+            if patience_counter >= patience:
+                print(f"Early stopping triggered at epoch {epoch+1}!")
+                if best_model_state is not None:
+                    self.model.load_state_dict(best_model_state)
+                    print("Restored best model from early stopping checkpoint (highest Val F1).")
+                break
 
-        # Restore best model
-        if best_model_state is not None:
+        if best_model_state is not None and patience_counter < patience:
             self.model.load_state_dict(best_model_state)
-            print("Restored best model from early stopping checkpoint.")
-
-        return self.history['train_loss'][-1], best_val_loss
+            print("Restored best model from early stopping checkpoint (highest Val F1).")
+            
+        print(f"Final InfoNCE Loss - Train: {avg_train_loss:.4f} | Val F1: {best_val_f1:.4f}")
+        return avg_train_loss, best_val_f1
 
     def set_voting_map(self, voting_map):
         self.voting_map = voting_map
