@@ -2,13 +2,13 @@
  "cells": [
   {
    "cell_type": "markdown",
-   "id": "18447e4e",
+   "id": "cba626d8",
    "metadata": {
     "papermill": {
-     "duration": 0.002092,
-     "end_time": "2026-08-01T04:47:46.158279+00:00",
+     "duration": 0.002108,
+     "end_time": "2026-08-01T05:49:16.220082+00:00",
      "exception": false,
-     "start_time": "2026-08-01T04:47:46.156187+00:00",
+     "start_time": "2026-08-01T05:49:16.217974+00:00",
      "status": "completed"
     },
     "tags": []
@@ -21,22 +21,22 @@
   {
    "cell_type": "code",
    "execution_count": 1,
-   "id": "9c8c48c8",
+   "id": "694cdd98",
    "metadata": {
     "execution": {
-     "iopub.execute_input": "2026-08-01T04:47:46.162702Z",
-     "iopub.status.busy": "2026-08-01T04:47:46.162053Z",
-     "iopub.status.idle": "2026-08-01T04:48:00.487366Z",
-     "shell.execute_reply": "2026-08-01T04:48:00.486503Z"
+     "iopub.execute_input": "2026-08-01T05:49:16.224106Z",
+     "iopub.status.busy": "2026-08-01T05:49:16.223714Z",
+     "iopub.status.idle": "2026-08-01T05:49:31.106914Z",
+     "shell.execute_reply": "2026-08-01T05:49:31.105941Z"
     },
     "jupyter": {
      "source_hidden": true
     },
     "papermill": {
-     "duration": 14.329587,
-     "end_time": "2026-08-01T04:48:00.489249+00:00",
+     "duration": 14.887281,
+     "end_time": "2026-08-01T05:49:31.108704+00:00",
      "exception": false,
-     "start_time": "2026-08-01T04:47:46.159662+00:00",
+     "start_time": "2026-08-01T05:49:16.221423+00:00",
      "status": "completed"
     },
     "tags": []
@@ -51,24 +51,24 @@
   {
    "cell_type": "code",
    "execution_count": 2,
-   "id": "7cc2b02b",
+   "id": "41f4ce60",
    "metadata": {
     "collapsed": true,
     "execution": {
-     "iopub.execute_input": "2026-08-01T04:48:00.494064Z",
-     "iopub.status.busy": "2026-08-01T04:48:00.493323Z",
-     "iopub.status.idle": "2026-08-01T04:48:02.509965Z",
-     "shell.execute_reply": "2026-08-01T04:48:02.508845Z"
+     "iopub.execute_input": "2026-08-01T05:49:31.113082Z",
+     "iopub.status.busy": "2026-08-01T05:49:31.112395Z",
+     "iopub.status.idle": "2026-08-01T05:49:32.780062Z",
+     "shell.execute_reply": "2026-08-01T05:49:32.778740Z"
     },
     "jupyter": {
      "outputs_hidden": true,
      "source_hidden": true
     },
     "papermill": {
-     "duration": 2.021226,
-     "end_time": "2026-08-01T04:48:02.511989+00:00",
+     "duration": 1.671724,
+     "end_time": "2026-08-01T05:49:32.781904+00:00",
      "exception": false,
-     "start_time": "2026-08-01T04:48:00.490763+00:00",
+     "start_time": "2026-08-01T05:49:31.110180+00:00",
      "status": "completed"
     },
     "tags": []
@@ -79,12 +79,12 @@
      "output_type": "stream",
      "text": [
       "Cloning into '/kaggle/working/temp_repo'...\r\n",
-      "remote: Enumerating objects: 195, done.\u001b[K\r\n",
-      "remote: Counting objects: 100% (195/195), done.\u001b[K\r\n",
-      "remote: Compressing objects: 100% (141/141), done.\u001b[K\r\n",
-      "remote: Total 195 (delta 96), reused 138 (delta 48), pack-reused 0 (from 0)\u001b[K\r\n",
-      "Receiving objects: 100% (195/195), 334.53 KiB | 7.27 MiB/s, done.\r\n",
-      "Resolving deltas: 100% (96/96), done.\r\n"
+      "remote: Enumerating objects: 202, done.\u001b[K\r\n",
+      "remote: Counting objects: 100% (202/202), done.\u001b[K\r\n",
+      "remote: Compressing objects: 100% (147/147), done.\u001b[K\r\n",
+      "remote: Total 202 (delta 102), reused 140 (delta 49), pack-reused 0 (from 0)\u001b[K\r\n",
+      "Receiving objects: 100% (202/202), 336.21 KiB | 11.21 MiB/s, done.\r\n",
+      "Resolving deltas: 100% (102/102), done.\r\n"
      ]
     }
    ],
@@ -98,24 +98,24 @@
   {
    "cell_type": "code",
    "execution_count": 3,
-   "id": "8028875d",
+   "id": "8de1ef71",
    "metadata": {
     "collapsed": true,
     "execution": {
-     "iopub.execute_input": "2026-08-01T04:48:02.517674Z",
-     "iopub.status.busy": "2026-08-01T04:48:02.517013Z",
-     "iopub.status.idle": "2026-08-01T04:48:07.230531Z",
-     "shell.execute_reply": "2026-08-01T04:48:07.229694Z"
+     "iopub.execute_input": "2026-08-01T05:49:32.786950Z",
+     "iopub.status.busy": "2026-08-01T05:49:32.786222Z",
+     "iopub.status.idle": "2026-08-01T05:49:37.795326Z",
+     "shell.execute_reply": "2026-08-01T05:49:37.794444Z"
     },
     "jupyter": {
      "outputs_hidden": true,
      "source_hidden": true
     },
     "papermill": {
-     "duration": 4.718819,
-     "end_time": "2026-08-01T04:48:07.232820+00:00",
+     "duration": 5.013711,
+     "end_time": "2026-08-01T05:49:37.797308+00:00",
      "exception": false,
-     "start_time": "2026-08-01T04:48:02.514001+00:00",
+     "start_time": "2026-08-01T05:49:32.783597+00:00",
      "status": "completed"
     },
     "tags": []
@@ -198,19 +198,19 @@
   {
    "cell_type": "code",
    "execution_count": 4,
-   "id": "f80d9991",
+   "id": "a091fb38",
    "metadata": {
     "execution": {
-     "iopub.execute_input": "2026-08-01T04:48:07.239838Z",
-     "iopub.status.busy": "2026-08-01T04:48:07.239402Z",
-     "iopub.status.idle": "2026-08-01T05:11:49.546081Z",
-     "shell.execute_reply": "2026-08-01T05:11:49.545261Z"
+     "iopub.execute_input": "2026-08-01T05:49:37.804869Z",
+     "iopub.status.busy": "2026-08-01T05:49:37.803469Z",
+     "iopub.status.idle": "2026-08-01T06:24:33.735000Z",
+     "shell.execute_reply": "2026-08-01T06:24:33.734194Z"
     },
     "papermill": {
-     "duration": 1422.312489,
-     "end_time": "2026-08-01T05:11:49.548133+00:00",
+     "duration": 2095.936926,
+     "end_time": "2026-08-01T06:24:33.736827+00:00",
      "exception": false,
-     "start_time": "2026-08-01T04:48:07.235644+00:00",
+     "start_time": "2026-08-01T05:49:37.799901+00:00",
      "status": "completed"
     },
     "tags": []
@@ -244,16 +244,19 @@
       "Relabeled 15073 noisy/contradictory samples as 'Flat' (0) out of 49412\r\n",
       "Class weights: [0.4218462  2.0529013  0.52525264]\r\n",
       "Starting MTF Supervised Contrastive + Classification Training...\r\n",
-      "Epoch 1/150 | Train: 7.2888 (CE: 1.0979) | Val F1: 0.3525 | Val Acc: 38.0%\r\n",
-      "Epoch 5/150 | Train: 7.0514 (CE: 1.0399) | Val F1: 0.4141 | Val Acc: 42.5%\r\n",
-      "Epoch 10/150 | Train: 7.0389 (CE: 1.0329) | Val F1: 0.3878 | Val Acc: 40.7%\r\n",
-      "Epoch 15/150 | Train: 7.0270 (CE: 1.0234) | Val F1: 0.4517 | Val Acc: 46.9%\r\n",
-      "Epoch 20/150 | Train: 7.0091 (CE: 1.0050) | Val F1: 0.4453 | Val Acc: 46.7%\r\n",
-      "Epoch 25/150 | Train: 6.9373 (CE: 0.9376) | Val F1: 0.4674 | Val Acc: 48.5%\r\n",
-      "Early stopping triggered at epoch 26!\r\n",
+      "Epoch 1/150 | Train: 7.2817 (CE: 1.0976) | Val F1: 0.3480 | Val Acc: 35.5%\r\n",
+      "Epoch 5/150 | Train: 7.0375 (CE: 1.0269) | Val F1: 0.4272 | Val Acc: 43.4%\r\n",
+      "Epoch 10/150 | Train: 7.0021 (CE: 0.9952) | Val F1: 0.3790 | Val Acc: 39.2%\r\n",
+      "Epoch 15/150 | Train: 6.9223 (CE: 0.9219) | Val F1: 0.4124 | Val Acc: 41.3%\r\n",
+      "Epoch 20/150 | Train: 6.8056 (CE: 0.8192) | Val F1: 0.4411 | Val Acc: 44.1%\r\n",
+      "Epoch 25/150 | Train: 6.6701 (CE: 0.7137) | Val F1: 0.4648 | Val Acc: 47.4%\r\n",
+      "Epoch 30/150 | Train: 6.5404 (CE: 0.6272) | Val F1: 0.4591 | Val Acc: 49.2%\r\n",
+      "Epoch 35/150 | Train: 6.4324 (CE: 0.5591) | Val F1: 0.4506 | Val Acc: 49.3%\r\n",
+      "Epoch 40/150 | Train: 6.3396 (CE: 0.5047) | Val F1: 0.4438 | Val Acc: 49.4%\r\n",
+      "Early stopping triggered at epoch 43!\r\n",
       "Restored best model from early stopping checkpoint (highest Val F1).\r\n",
-      "Final InfoNCE Loss - Train: 6.9229 | Val F1: 0.4688\r\n",
-      "Final InfoNCE Loss - Train: 6.9229 | Val: 0.4688\r\n",
+      "Final InfoNCE Loss - Train: 6.2812 | Val F1: 0.4703\r\n",
+      "Final InfoNCE Loss - Train: 6.2812 | Val: 0.4703\r\n",
       "\r\n",
       "[Phase 3.5] Building Cluster Voting Map via Agglomerative Clustering...\r\n",
       "Applying PyTorch Multi-Timeframe ENN to clean noise...\r\n",
@@ -261,27 +264,27 @@
       "Relabeled 15073 noisy/contradictory samples as 'Flat' (0) out of 49412\r\n",
       "  train_c_probs shape: (49412, 6), y_train shape: (49412,)\r\n",
       "  Label distribution in y_train: {np.float64(0.0): np.int64(24600), np.float64(1.0): np.int64(5055), np.float64(2.0): np.int64(19757)}\r\n",
-      "Macro-Cluster to Triple Barrier Label Mapping: {0: 2, 1: 0, 2: 0}\r\n",
+      "Macro-Cluster to Triple Barrier Label Mapping: {0: 0, 1: 2, 2: 0}\r\n",
       "Model saved to /kaggle/working/trading_bot_TFT/models/model.pkl\r\n",
       "\r\n",
       "[Phase 4] Generating t-SNE & Confusion Matrix...\r\n",
       "Evaluating Best Model on Validation Set...\r\n",
       "\r\n",
       "--- Validation Confusion Matrix ---\r\n",
-      "[[4418  599  525]\r\n",
-      " [1009 1654 1713]\r\n",
-      " [3254 3483 3852]]\r\n",
+      "[[3828  870  844]\r\n",
+      " [ 752 1385 2239]\r\n",
+      " [2584 3053 4952]]\r\n",
       "\r\n",
       "--- Validation Classification Report ---\r\n",
       "              precision    recall  f1-score   support\r\n",
       "\r\n",
-      "        Flat       0.51      0.80      0.62      5542\r\n",
-      "          Up       0.29      0.38      0.33      4376\r\n",
-      "        Down       0.63      0.36      0.46     10589\r\n",
+      "        Flat       0.53      0.69      0.60      5542\r\n",
+      "          Up       0.26      0.32      0.29      4376\r\n",
+      "        Down       0.62      0.47      0.53     10589\r\n",
       "\r\n",
-      "    accuracy                           0.48     20507\r\n",
-      "   macro avg       0.48      0.51      0.47     20507\r\n",
-      "weighted avg       0.53      0.48      0.48     20507\r\n",
+      "    accuracy                           0.50     20507\r\n",
+      "   macro avg       0.47      0.49      0.47     20507\r\n",
+      "weighted avg       0.52      0.50      0.50     20507\r\n",
       "\r\n",
       "Skipped t-SNE due to MTF signature mismatch (will update later).\r\n",
       "\r\n",
@@ -293,11 +296,11 @@
       "BACKTEST PERFORMANCE REPORT\r\n",
       "==================================================\r\n",
       "Total Return (%): -100.00%\r\n",
-      "Sharpe Ratio: -4.01\r\n",
+      "Sharpe Ratio: -4.26\r\n",
       "Max Drawdown (%): -100.00%\r\n",
-      "Win Rate (%): 41.60%\r\n",
+      "Win Rate (%): 40.81%\r\n",
       "Final Value: 0.00\r\n",
-      "Total Trades: 2570.00\r\n",
+      "Total Trades: 2774.00\r\n",
       "==================================================\r\n",
       "\r\n",
       "Generating performance visualization...\r\n",
@@ -335,14 +338,14 @@
   },
   "papermill": {
    "default_parameters": {},
-   "duration": 1446.086632,
-   "end_time": "2026-08-01T05:11:49.869980+00:00",
+   "duration": 2120.505857,
+   "end_time": "2026-08-01T06:24:34.058662+00:00",
    "environment_variables": {},
    "exception": null,
    "input_path": "__notebook__.ipynb",
    "output_path": "__notebook__.ipynb",
    "parameters": {},
-   "start_time": "2026-08-01T04:47:43.783348+00:00",
+   "start_time": "2026-08-01T05:49:13.552805+00:00",
    "version": "2.7.0"
   }
  },
