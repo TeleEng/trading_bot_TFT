@@ -22,6 +22,10 @@ A professional FX trading bot powered by **HistData.com 1-minute data**, **Tempo
   - **LSTM Encoder**: Captures temporal dependencies in sequences
   - **MultiheadAttention**: Identifies key time steps and cross-feature interactions
   - **3-Class Classifier**: Outputs probability distribution over market regimes
+- **Self-Supervised MTF & PyTorch ENN**:
+  - Uses Multi-Timeframe (MTF) Supervised Contrastive Learning.
+  - Custom **PyTorch ENN** (Edited Nearest Neighbors) to aggressively clean contradictory labels and eliminate noise from the dataset.
+  - Implements **Macro F1 Early Stopping** to maintain balance and prevent overfitting regardless of class imbalance.
 - **Input**: 30-timestep sequences of engineered features
 - **Output**: Probabilities [P_Flat, P_Up, P_Down] for decision-making
 

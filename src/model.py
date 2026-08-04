@@ -195,7 +195,7 @@ class PricePredictor:
                 X_enn = np.concatenate([X1_flat, X4_flat], axis=1)
                 X_enn = np.nan_to_num(X_enn, nan=0.0)
                 
-                enn = PyTorchENN(n_neighbors=5, kind_sel='mode', batch_size=2048, device='cuda')
+                enn = PyTorchENN(n_neighbors=5, kind_sel='mode', batch_size=256, device='cuda')
                 keep_idx = enn.fit_resample(X_enn, y)
                 
                 noisy_samples = len(y) - len(keep_idx)
