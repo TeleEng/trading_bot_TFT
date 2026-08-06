@@ -49,6 +49,11 @@ class TradingRLEnv(gym.Env):
         self.entry_atr = 0.0  # ATR at trade entry, used for fixed TP/SL
         self.bars_held = 0    # track how long current position is held
         
+        self.current_sl_price = 0.0
+        self.tp_price = 0.0
+        self.half_tp_price = 0.0
+        self.secured_sl_price = 0.0
+        
         self.consecutive_losses = 0
         self.trade_history = [(0.0, 0.0)] * 5
         self.portfolio_history = [self.initial_capital] * 5
@@ -90,37 +95,38 @@ class TradingRLEnv(gym.Env):
         
     def _check_tp_sl_intrabar(self, high, low):
         """Check TP/SL using High/Low of the bar (intra-bar simulation).
-        Uses the ENTRY ATR (self.entry_atr) for fixed TP/SL levels.
+        Uses dynamic SL (moves to 25% TP if 50% TP is hit).
         Returns: (trade_closed, trade_reward, exit_price)
         """
         if self.position == 0 or self.entry_atr <= 0:
             return False, 0.0, 0.0
             
-        tp_distance = self.tp_mult * self.entry_atr
-        sl_distance = self.sl_mult * self.entry_atr
-        
         if self.position > 0:  # Long
-            tp_price = self.entry_price + tp_distance
-            sl_price = self.entry_price - sl_distance
-            
+            # If high reaches half TP, move SL up
+            if high >= self.half_tp_price:
+                self.current_sl_price = max(self.current_sl_price, self.secured_sl_price)
+                
             # SL checked first (conservative: assume adverse move happens first)
-            if low <= sl_price:
-                exit_price = self._get_fill_price(sl_price, -1)  # selling to close
-                return True, -1.0, exit_price
-            elif high >= tp_price:
-                exit_price = self._get_fill_price(tp_price, -1)
+            if low <= self.current_sl_price:
+                exit_price = self._get_fill_price(self.current_sl_price, -1)  # selling to close
+                reward = 0.5 if self.current_sl_price > self.entry_price else -1.0
+                return True, reward, exit_price
+            elif high >= self.tp_price:
+                exit_price = self._get_fill_price(self.tp_price, -1)
                 return True, 1.0, exit_price
                 
         else:  # Short
-            tp_price = self.entry_price - tp_distance
-            sl_price = self.entry_price + sl_distance
-            
+            # If low reaches half TP, move SL down
+            if low <= self.half_tp_price:
+                self.current_sl_price = min(self.current_sl_price, self.secured_sl_price)
+                
             # SL checked first (conservative)
-            if high >= sl_price:
-                exit_price = self._get_fill_price(sl_price, 1)  # buying to close
-                return True, -1.0, exit_price
-            elif low <= tp_price:
-                exit_price = self._get_fill_price(tp_price, 1)
+            if high >= self.current_sl_price:
+                exit_price = self._get_fill_price(self.current_sl_price, 1)  # buying to close
+                reward = 0.5 if self.current_sl_price < self.entry_price else -1.0
+                return True, reward, exit_price
+            elif low <= self.tp_price:
+                exit_price = self._get_fill_price(self.tp_price, 1)
                 return True, 1.0, exit_price
                 
         return False, 0.0, 0.0
@@ -149,6 +155,20 @@ class TradingRLEnv(gym.Env):
         self.entry_price = fill_price
         self.entry_atr = atr  # Lock in ATR at entry for fixed TP/SL
         self.bars_held = 0
+        
+        # Initialize dynamic TP/SL levels
+        tp_distance = self.tp_mult * atr
+        sl_distance = self.sl_mult * atr
+        if direction > 0:
+            self.current_sl_price = fill_price - sl_distance
+            self.tp_price = fill_price + tp_distance
+            self.half_tp_price = fill_price + (tp_distance * 0.5)
+            self.secured_sl_price = fill_price + (tp_distance * 0.25)
+        else:
+            self.current_sl_price = fill_price + sl_distance
+            self.tp_price = fill_price - tp_distance
+            self.half_tp_price = fill_price - (tp_distance * 0.5)
+            self.secured_sl_price = fill_price - (tp_distance * 0.25)
         
     def step(self, action):
         if self.current_step >= len(self.df) - 1 or self.portfolio_value <= 0:
