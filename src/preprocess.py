@@ -120,7 +120,7 @@ def add_all_features(df):
     df['Momentum_10'] = df['Close'] - df['Close'].shift(10)
     
     # 6-Hour Triple Barrier
-    df = add_triple_barrier_labels(df, max_wait=6)
+    df = add_triple_barrier_labels(df)
     
     return df
 
@@ -161,7 +161,7 @@ def generate_timeframe_data(timeframe_str, is_base=False):
     
     # Only the base timeframe needs the target labels
     if is_base:
-        main_df = add_triple_barrier_labels(main_df, max_wait=6)
+        main_df = add_triple_barrier_labels(main_df)
     
     processed_exogenous = {}
     for ticker, df in exogenous_dfs:
@@ -178,7 +178,7 @@ def generate_timeframe_data(timeframe_str, is_base=False):
     unified.ffill(limit=12, inplace=True)
     unified.dropna(inplace=True)
     if is_base:
-        unified = unified.iloc[:-6] # Drop final rows with unresolved labels
+        unified = unified.iloc[:-48] # Drop final rows with unresolved labels
 
     unified['hour_sin'] = np.sin(2 * np.pi * unified.index.hour / 24)
     unified['hour_cos'] = np.cos(2 * np.pi * unified.index.hour / 24)
