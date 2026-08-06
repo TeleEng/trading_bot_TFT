@@ -221,7 +221,7 @@ class PricePredictor:
                 valid_mask[i] = True
         return df_1h.iloc[valid_mask]
 
-    def train(self, dfs_train, dfs_val, epochs=50, batch_size=256):
+    def train(self, dfs_train, dfs_val, epochs=50, batch_size=256, patience=20):
         df_1h_t, df_4h_t, df_1d_t, df_1w_t = dfs_train
         df_1h_v, df_4h_v, df_1d_v, df_1w_v = dfs_val
 
@@ -273,7 +273,6 @@ class PricePredictor:
         print("Starting MTF Supervised Contrastive + Classification Training...")
         
         best_val_f1 = -float('inf')
-        patience = 20
         patience_counter = 0
         best_model_state = None
 
