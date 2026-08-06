@@ -3,7 +3,7 @@ from gymnasium import spaces
 import numpy as np
 
 class TradingRLEnv(gym.Env):
-    def __init__(self, embeddings, df, tp_mult=1.5, sl_mult=0.75, initial_capital=10000,
+    def __init__(self, embeddings, df, tp_mult=3.0, sl_mult=0.75, initial_capital=10000,
                  spread_pips=1.0, slippage_pips=0.3):
         super(TradingRLEnv, self).__init__()
         self.embeddings = embeddings

@@ -30,10 +30,10 @@ MAIN_ASSET = os.getenv("MAIN_ASSET", "EURUSD")
 
 OUTPUT_PATH.mkdir(parents=True, exist_ok=True)
 
-def add_triple_barrier_labels(df, atr_window=14, tp_mult=1.5, sl_mult=0.75, max_wait=6):
+def add_triple_barrier_labels(df, atr_window=14, tp_mult=3.0, sl_mult=0.75, max_wait=12):
     """
-    Implements a 6-Hour Triple Barrier Method using dynamic ATR.
-    tp_mult=1.5 and sl_mult=0.75 enforces the R/R = 2 rule.
+    Implements a Triple Barrier Method using dynamic ATR.
+    tp_mult=3.0 and sl_mult=0.75 enforces the R/R = 1:4 rule.
     """
     # 1. Calculate Average True Range (ATR)
     high_low = df['High'] - df['Low']

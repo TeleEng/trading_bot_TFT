@@ -19,7 +19,7 @@ class Backtester:
         self.risk_percentage = risk_percentage 
         
         # FIX: Align Backtester with the Preprocessor's ATR Logic
-        self.tp_mult = 1.5
+        self.tp_mult = 3.0
         self.sl_mult = 0.75
 
         self.cooldown_periods = 2 # Reduced cooldown for faster 6h strategy
