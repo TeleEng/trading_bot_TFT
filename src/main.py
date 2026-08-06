@@ -38,7 +38,7 @@ def main():
     results_dir.mkdir(parents=True, exist_ok=True)
 
     print("\n[Phase 1] Downloading & Preprocessing Data...")
-    # download_histdata(TICKERS, START_YEAR, END_YEAR, DATA_PATH)
+    download_histdata(TICKERS, START_YEAR, END_YEAR, DATA_PATH)
     process_all_data()
 
     print("\n[Phase 2] Loading MTF Data & Splitting (60/20/20)...")
