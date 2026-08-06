@@ -6,3 +6,5 @@ python-dotenv
 scikit-learn
 matplotlib
 seaborn
+stable-baselines3
+gymnasium
