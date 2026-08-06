@@ -194,6 +194,7 @@ class TradingRLEnv(gym.Env):
             swap_cost = abs(self.position) * self.swap_per_bar
             self.capital -= swap_cost
         
+        streak_penalty = 0.0
         # --- Check TP/SL using High/Low and fixed entry ATR ---
         if self.position != 0:
             trade_closed, trade_reward, exit_price = self._check_tp_sl_intrabar(high, low)
@@ -204,6 +205,8 @@ class TradingRLEnv(gym.Env):
                     self.consecutive_losses = 0
                 else:
                     self.consecutive_losses += 1
+                    if self.consecutive_losses >= 3:
+                        streak_penalty = -(1.1 ** (self.consecutive_losses - 3))
                     
         if trade_closed:
             last_dir = 1.0 if current_direction > 0 else 2.0
@@ -241,10 +244,7 @@ class TradingRLEnv(gym.Env):
         self.portfolio_value = self.capital + (self.position * (price - self.entry_price) if self.position != 0 else 0)
         
         step_reward = (self.portfolio_value - self.last_portfolio_value) / self.initial_capital
-        reward = step_reward * 100 + action_reward + (trade_reward * 5.0)
-        
-        if self.consecutive_losses >= 3:
-            reward -= (1.1 ** (self.consecutive_losses - 3))
+        reward = step_reward * 100 + action_reward + (trade_reward * 5.0) + streak_penalty
             
         if self.bars_flat > 48:
             reward -= 0.01
