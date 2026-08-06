@@ -193,39 +193,19 @@ class TradingRLEnv(gym.Env):
             current_direction = 0.0
             
         # --- Handle agent action ---
-        target_direction = 0.0
-        if action == 1: target_direction = 1.0
-        elif action == 2: target_direction = -1.0
-        
+        # The agent can ONLY act if there is NO open position.
+        # Once in a trade, it MUST hold until TP or SL is hit.
         action_reward = 0.0
-        if target_direction != current_direction and not trade_closed:
-            # Agent wants to change direction while no TP/SL was hit
-            if self.position != 0:
-                # Close existing position at market with spread/slippage
-                close_dir = -1.0 if self.position > 0 else 1.0
-                exit_price = self._get_fill_price(price, close_dir)
-                
-                unrealized_return = (exit_price - self.entry_price) / self.entry_price if self.position > 0 else (self.entry_price - exit_price) / self.entry_price
-                if unrealized_return > 0:
-                    action_reward = unrealized_return * 100
-                    self.consecutive_losses = 0
-                else:
-                    action_reward = unrealized_return * 100
-                    self.consecutive_losses += 1
-                    
-                self._close_position(exit_price)
-                last_dir = 1.0 if current_direction > 0 else 2.0
-                self.trade_history.append((last_dir, action_reward))
-                self.trade_history.pop(0)
-                self.portfolio_history.append(self.portfolio_value)
-                self.portfolio_history.pop(0)
-                
+        
+        if self.position == 0:
+            target_direction = 0.0
+            if action == 1: target_direction = 1.0
+            elif action == 2: target_direction = -1.0
+            
             if target_direction != 0:
                 self._open_position(price, atr, target_direction)
-                
-        elif trade_closed and target_direction != 0:
-            # TP/SL was hit, agent wants to re-enter immediately
-            self._open_position(price, atr, target_direction)
+                # Small penalty for entering a trade to discourage excessive trading
+                action_reward = -0.05
 
         # Update portfolio value (mark-to-market at mid-price)
         self.portfolio_value = self.capital + (self.position * (price - self.entry_price) if self.position != 0 else 0)
