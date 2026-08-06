@@ -161,8 +161,8 @@ def main():
     train_embeddings = model.predict_batch_embeddings((train_1h, df_4h, df_1d, df_1w))
     val_embeddings = model.predict_batch_embeddings((val_1h, df_4h, df_1d, df_1w))
     
-    train_env = TradingRLEnv(train_embeddings, train_1h.iloc[model.input_chunk_length:])
-    val_env = TradingRLEnv(val_embeddings, val_1h.iloc[model.input_chunk_length:])
+    train_env = TradingRLEnv(train_embeddings, model.get_aligned_df(train_1h, df_4h, df_1d, df_1w))
+    val_env = TradingRLEnv(val_embeddings, model.get_aligned_df(val_1h, df_4h, df_1d, df_1w))
     
     train_env = Monitor(train_env)
     val_env = Monitor(val_env)
@@ -188,7 +188,7 @@ def main():
     print("\n[Phase 5] Running out-of-sample backtest with RL Agent...")
     
     test_embeddings = model.predict_batch_embeddings((test_1h, df_4h, df_1d, df_1w))
-    test_env = TradingRLEnv(test_embeddings, test_1h.iloc[model.input_chunk_length:])
+    test_env = TradingRLEnv(test_embeddings, model.get_aligned_df(test_1h, df_4h, df_1d, df_1w))
     
     obs, _ = test_env.reset()
     done = False

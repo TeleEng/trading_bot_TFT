@@ -209,6 +209,18 @@ class PricePredictor:
             
         return X_1h, X_4h, X_1d, X_1w
 
+    def get_aligned_df(self, df_1h, df_4h, df_1d, df_1w):
+        """Returns the subset of df_1h that exactly matches the generated sequences/embeddings."""
+        idx_4h = df_4h.index.get_indexer(df_1h.index, method='ffill')
+        idx_1d = df_1d.index.get_indexer(df_1h.index, method='ffill')
+        idx_1w = df_1w.index.get_indexer(df_1h.index, method='ffill')
+        
+        valid_mask = np.zeros(len(df_1h), dtype=bool)
+        for i in range(self.input_chunk_length, len(df_1h)):
+            if idx_4h[i] >= 52 and idx_1d[i] >= 52 and idx_1w[i] >= 52:
+                valid_mask[i] = True
+        return df_1h.iloc[valid_mask]
+
     def train(self, dfs_train, dfs_val, epochs=50, batch_size=256):
         df_1h_t, df_4h_t, df_1d_t, df_1w_t = dfs_train
         df_1h_v, df_4h_v, df_1d_v, df_1w_v = dfs_val
