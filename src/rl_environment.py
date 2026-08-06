@@ -15,9 +15,9 @@ class TradingRLEnv(gym.Env):
         # 0: Flat, 1: Long, 2: Short
         self.action_space = spaces.Discrete(3)
         
-        # Observation: 128 (emb) + 1 (local_ratio) + 10 (last 5 actions+rewards) = 139
+        # Observation: 128 (emb) + 1 (local_ratio) + 10 (last 5 actions+rewards) + 1 (direction) + 1 (unrealized_return) = 141
         emb_size = embeddings.shape[1] if len(embeddings) > 0 else 128
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(emb_size + 11,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(emb_size + 13,), dtype=np.float32)
         
         self.reset()
         
@@ -49,7 +49,21 @@ class TradingRLEnv(gym.Env):
         for action, reward in self.trade_history[-5:]:
             hist.extend([float(action), float(reward)])
             
-        obs = np.concatenate([emb, [local_ratio], hist]).astype(np.float32)
+        current_row = self.df.iloc[self.current_step]
+        price = current_row['Close']
+        
+        current_direction = 1.0 if self.position > 0 else (-1.0 if self.position < 0 else 0.0)
+        unrealized_return = 0.0
+        if self.position != 0 and self.entry_price > 0:
+            if self.position > 0:
+                unrealized_return = (price - self.entry_price) / self.entry_price
+            else:
+                unrealized_return = (self.entry_price - price) / self.entry_price
+                
+        # Scale up unrealized return for network visibility (similar to action_reward scaling)
+        unrealized_return *= 100.0
+            
+        obs = np.concatenate([emb, [local_ratio], hist, [current_direction, unrealized_return]]).astype(np.float32)
         # Handle NaNs safely
         obs = np.nan_to_num(obs, nan=0.0, posinf=1.0, neginf=-1.0)
         return obs
