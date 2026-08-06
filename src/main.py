@@ -176,7 +176,7 @@ def main():
         render=False
     )
     
-    ppo_model = PPO("MlpPolicy", train_env, verbose=1, device=model.device)
+    ppo_model = PPO("MlpPolicy", train_env, verbose=1, device="cpu")
     ppo_model.learn(total_timesteps=30000, callback=eval_callback)
     
     try:
