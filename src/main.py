@@ -90,7 +90,7 @@ def main():
     train_score, val_score = model.train(
         (train_1h, df_4h, df_1d, df_1w),
         (val_1h, df_4h, df_1d, df_1w),
-        epochs=150,
+        epochs=50,
         patience=20
     )
     print(f"Final InfoNCE Loss - Train: {train_score:.4f} | Val: {val_score:.4f}")
@@ -178,7 +178,7 @@ def main():
     )
     
     ppo_model = PPO("MlpPolicy", train_env, verbose=1, device="cpu")
-    ppo_model.learn(total_timesteps=2000000, callback=eval_callback)
+    ppo_model.learn(total_timesteps=100000, callback=eval_callback)
     
     try:
         ppo_model = PPO.load(str(models_dir / "best_model.zip"))
