@@ -374,10 +374,11 @@ class PricePredictor:
         X1w = torch.FloatTensor(X1w[-1:]).to(self.device)
         
         with torch.no_grad():
-            _, _, _, logits = self.model(X1, X4, X1d, X1w)
-            probs = torch.softmax(logits, dim=1).cpu().numpy()
+            _, _, c_over, _ = self.model(X1, X4, X1d, X1w)
+            c_probs = c_over.cpu().numpy()
             
-        return probs[0, 0], probs[0, 1], probs[0, 2]
+        out_probs = self._apply_voting(c_probs)
+        return out_probs[0, 0], out_probs[0, 1], out_probs[0, 2]
 
     def predict_batch(self, dfs, batch_size=512):
         """Returns (N, 6) raw micro-cluster probs for building the voting map."""
@@ -405,6 +406,32 @@ class PricePredictor:
                 
         c_probs = np.concatenate(all_probs, axis=0)
         return c_probs
+        
+    def predict_batch_embeddings(self, dfs, batch_size=512):
+        """Returns (N, hidden_size) fused embeddings."""
+        self.model.eval()
+        df_1h, df_4h, df_1d, df_1w = dfs
+        result = self.create_sequences(df_1h, df_4h, df_1d, df_1w)
+        X1, X4, X1d, X1w = result[0], result[1], result[2], result[3]
+        
+        if len(X1) == 0:
+            return np.array([])
+            
+        X1 = torch.FloatTensor(X1).to(self.device)
+        X4 = torch.FloatTensor(X4).to(self.device)
+        X1d = torch.FloatTensor(X1d).to(self.device)
+        X1w = torch.FloatTensor(X1w).to(self.device)
+        
+        dataset = torch.utils.data.TensorDataset(X1, X4, X1d, X1w)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
+        
+        all_h = []
+        with torch.no_grad():
+            for b_x1, b_x4, b_x1d, b_x1w in loader:
+                h, _, _, _ = self.model(b_x1, b_x4, b_x1d, b_x1w)
+                all_h.append(h.cpu().numpy())
+                
+        return np.concatenate(all_h, axis=0)
         
     def predict_batch_classified(self, dfs, batch_size=512):
         """Returns (N, 3) softmax probabilities from the classification head."""
@@ -434,8 +461,9 @@ class PricePredictor:
         return np.concatenate(all_probs, axis=0)
 
     def predict_batch_voted(self, dfs, batch_size=512):
-        """Use classification head directly (bypasses cluster voting)."""
-        return self.predict_batch_classified(dfs, batch_size)
+        """Returns (N, 3) probabilities based on cluster voting map."""
+        c_probs = self.predict_batch(dfs, batch_size)
+        return self._apply_voting(c_probs)
 
     def save(self, path):
         torch.save(self.model.state_dict(), path)

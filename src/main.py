@@ -18,6 +18,11 @@ from performance import PerformanceMetrics
 from viz import plot_tsne_and_confusion_matrix
 
 from sklearn.cluster import AgglomerativeClustering
+
+from rl_environment import TradingRLEnv
+from stable_baselines3 import PPO
+from stable_baselines3.common.callbacks import EvalCallback
+from stable_baselines3.common.monitor import Monitor
 from sklearn.metrics import confusion_matrix, classification_report
 
 def main():
@@ -107,12 +112,32 @@ def main():
     print(f"  train_c_probs shape: {train_c_probs.shape}, y_train shape: {y_train.shape}")
     print(f"  Label distribution in y_train: {dict(zip(*np.unique(y_train, return_counts=True)))}")
     
+    # Calculate baseline distributions
+    total_samples = len(y_train)
+    baseline_probs = {c: (y_train == c).sum() / total_samples for c in [0, 1, 2]}
+    
     macro_to_target = {}
     for macro_idx in range(3):
         idx = (train_macro_preds == macro_idx)
         if idx.sum() > 0:
-            majority_label = pd.Series(y_train[idx]).mode()[0]
-            macro_to_target[macro_idx] = int(majority_label)
+            cluster_labels = y_train[idx]
+            cluster_size = len(cluster_labels)
+            
+            best_class = 0
+            best_relative_density = -1
+            
+            for c in [0, 1, 2]:
+                class_count = (cluster_labels == c).sum()
+                if class_count == 0:
+                    continue
+                cluster_prob = class_count / cluster_size
+                relative_density = cluster_prob / baseline_probs[c]
+                
+                if relative_density > best_relative_density:
+                    best_relative_density = relative_density
+                    best_class = c
+                    
+            macro_to_target[macro_idx] = int(best_class)
         else:
             macro_to_target[macro_idx] = 0
             
@@ -132,30 +157,63 @@ def main():
     with open(models_dir / "voting_map.json", "w") as f:
         json.dump(voting_map, f)
 
-    print("\n[Phase 4] Generating t-SNE & Confusion Matrix...")
-    # Let's evaluate the newly trained and restored best model on the Validation Set
-    print("Evaluating Best Model on Validation Set...")
-    val_c_probs = model.predict_batch_classified((val_1h, df_4h, df_1d, df_1w))
-    if len(val_c_probs) > 0:
-        val_preds = val_c_probs.argmax(axis=1)
-        _, _, _, _, y_val = model.create_sequences(val_1h, df_4h, df_1d, df_1w, clean_noise=False)
+    print("\n[Phase 4] Training RL Agent via PPO...")
+    train_embeddings = model.predict_batch_embeddings((train_1h, df_4h, df_1d, df_1w))
+    val_embeddings = model.predict_batch_embeddings((val_1h, df_4h, df_1d, df_1w))
+    
+    train_env = TradingRLEnv(train_embeddings, train_1h.iloc[model.input_chunk_length:])
+    val_env = TradingRLEnv(val_embeddings, val_1h.iloc[model.input_chunk_length:])
+    
+    train_env = Monitor(train_env)
+    val_env = Monitor(val_env)
+    
+    eval_callback = EvalCallback(
+        val_env, 
+        best_model_save_path=str(models_dir),
+        log_path=str(models_dir), 
+        eval_freq=5000,
+        deterministic=True, 
+        render=False
+    )
+    
+    ppo_model = PPO("MlpPolicy", train_env, verbose=1, device=model.device)
+    ppo_model.learn(total_timesteps=30000, callback=eval_callback)
+    
+    try:
+        ppo_model = PPO.load(str(models_dir / "best_model.zip"))
+        print("Loaded best RL model from validation.")
+    except Exception as e:
+        print("Failed to load best model, using current model.")
+
+    print("\n[Phase 5] Running out-of-sample backtest with RL Agent...")
+    
+    test_embeddings = model.predict_batch_embeddings((test_1h, df_4h, df_1d, df_1w))
+    test_env = TradingRLEnv(test_embeddings, test_1h.iloc[model.input_chunk_length:])
+    
+    obs, _ = test_env.reset()
+    done = False
+    
+    results = []
+    
+    while not done:
+        idx = test_env.current_step
+        current_timestamp = test_env.df.index[idx]
+        current_price = test_env.df.iloc[idx]['Close']
         
-        print("\n--- Validation Confusion Matrix ---")
-        print(confusion_matrix(y_val, val_preds))
-        print("\n--- Validation Classification Report ---")
-        print(classification_report(y_val, val_preds, target_names=["Flat", "Up", "Down"]))
-    else:
-        print("Validation set too small for evaluation.")
+        action, _states = ppo_model.predict(obs, deterministic=True)
+        obs, reward, terminated, truncated, _ = test_env.step(action)
+        done = terminated or truncated
+        
+        results.append({
+            'timestamp': current_timestamp,
+            'price': current_price,
+            'position': test_env.position,
+            'portfolio_value': test_env.portfolio_value
+        })
+        
+    backtest_results = pd.DataFrame(results)
     
-    print("Skipped t-SNE due to MTF signature mismatch (will update later).")
-
-    print("\n[Phase 5] Running out-of-sample backtest with 3-of-5 signal buffer...")
-    
-    environment = TradingEnvironment(initial_capital=10000)
-    backtester = Backtester(model, environment, threshold=0.35, risk_percentage=0.02)
-
-    backtest_results = backtester.run((test_1h, df_4h, df_1d, df_1w))
-
+    # Calculate metrics
     metrics = PerformanceMetrics.calculate_metrics(
         backtest_results,
         initial_capital=10000
