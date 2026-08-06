@@ -55,6 +55,7 @@ class TradingRLEnv(gym.Env):
         self.secured_sl_price = 0.0
         
         self.consecutive_losses = 0
+        self.bars_flat = 0
         self.trade_history = [(0.0, 0.0)] * 5
         self.portfolio_history = [self.initial_capital] * 5
         
@@ -218,6 +219,7 @@ class TradingRLEnv(gym.Env):
         action_reward = 0.0
         
         if self.position == 0:
+            self.bars_flat += 1
             target_direction = 0.0
             if action == 1: target_direction = 1.0
             elif action == 2: target_direction = -1.0
@@ -226,6 +228,8 @@ class TradingRLEnv(gym.Env):
                 self._open_position(price, atr, target_direction)
                 # Small penalty for entering a trade to discourage excessive trading
                 action_reward = -0.05
+        else:
+            self.bars_flat = 0
 
         # Update portfolio value (mark-to-market at mid-price)
         self.portfolio_value = self.capital + (self.position * (price - self.entry_price) if self.position != 0 else 0)
@@ -234,7 +238,10 @@ class TradingRLEnv(gym.Env):
         reward = step_reward * 100 + action_reward + (trade_reward * 5.0)
         
         if self.consecutive_losses >= 3:
-            reward -= 2.0
+            reward -= (1.1 ** (self.consecutive_losses - 3))
+            
+        if self.bars_flat > 48:
+            reward -= 0.01
             
         self.last_portfolio_value = self.portfolio_value
         self.current_step += 1
