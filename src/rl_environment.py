@@ -228,6 +228,12 @@ class TradingRLEnv(gym.Env):
                 self._open_position(price, atr, target_direction)
                 # Small penalty for entering a trade to discourage excessive trading
                 action_reward = -0.05
+                
+            # Dampen portfolio history towards current value so local_ratio decays back to 1.0
+            # This prevents the agent from sitting flat forever just because it had a good streak.
+            alpha = 0.01 # 1% decay per hour flat
+            for i in range(len(self.portfolio_history)):
+                self.portfolio_history[i] = (1 - alpha) * self.portfolio_history[i] + alpha * self.portfolio_value
         else:
             self.bars_flat = 0
 
