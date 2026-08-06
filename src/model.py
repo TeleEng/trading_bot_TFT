@@ -235,6 +235,10 @@ class PricePredictor:
             num_layers=self.num_layers
         ).to(self.device)
 
+        if torch.cuda.device_count() > 1:
+            print(f"Using {torch.cuda.device_count()} GPUs for PyTorch training via DataParallel!")
+            self.model = nn.DataParallel(self.model)
+
         optimizer = optim.Adam(self.model.parameters(), lr=1e-3, weight_decay=1e-4)
         
         train_dataset = torch.utils.data.TensorDataset(X1_t, X4_t, X1d_t, X1w_t, y_t)
@@ -465,12 +469,26 @@ class PricePredictor:
         c_probs = self.predict_batch(dfs, batch_size)
         return self._apply_voting(c_probs)
 
+    def get_over_cluster_weights(self):
+        """Helper to get weights even if model is wrapped in DataParallel"""
+        base_model = self.model.module if isinstance(self.model, nn.DataParallel) else self.model
+        return base_model.over_cluster_head[3].weight.data.cpu().numpy()
+
     def save(self, path):
-        torch.save(self.model.state_dict(), path)
+        if isinstance(self.model, nn.DataParallel):
+            torch.save(self.model.module.state_dict(), path)
+        else:
+            torch.save(self.model.state_dict(), path)
         print(f"Model saved to {path}")
 
     def load(self, path, input_size):
         self.model = MultiTimeframeTFT(input_size=input_size, hidden_size=self.hidden_size, num_layers=self.num_layers).to(self.device)
-        self.model.load_state_dict(torch.load(path))
+        
+        state_dict = torch.load(path)
+        self.model.load_state_dict(state_dict)
+        
+        if torch.cuda.device_count() > 1:
+            self.model = nn.DataParallel(self.model)
+            
         self.model.eval()
         print(f"Model loaded from {path}")

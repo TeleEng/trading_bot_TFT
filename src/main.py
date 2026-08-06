@@ -95,7 +95,7 @@ def main():
     print(f"Final InfoNCE Loss - Train: {train_score:.4f} | Val: {val_score:.4f}")
 
     print("\n[Phase 3.5] Building Cluster Voting Map via Agglomerative Clustering...")
-    W = model.model.over_cluster_head[3].weight.data.cpu().numpy() # (6, hidden_size)
+    W = model.get_over_cluster_weights() # (6, hidden_size)
     agg = AgglomerativeClustering(n_clusters=3)
     macro_labels = agg.fit_predict(W) # (6,)
     
