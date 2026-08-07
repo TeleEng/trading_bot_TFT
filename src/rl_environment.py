@@ -150,7 +150,8 @@ class TradingRLEnv(gym.Env):
         fill_price = self._get_fill_price(price, direction)
         
         risk_amount = self.portfolio_value * 0.02
-        risk_per_unit = atr * self.sl_mult
+        sl_mult = self.long_sl_mult if direction > 0 else self.short_sl_mult
+        risk_per_unit = atr * sl_mult
         ideal_qty = (risk_amount / risk_per_unit) if risk_per_unit > 0 else 0.0
         max_qty_allowed = (self.portfolio_value * 50 * 0.98) / fill_price
         target_qty = min(ideal_qty, max_qty_allowed) * direction
