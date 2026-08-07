@@ -199,6 +199,16 @@ class TradingRLEnv(gym.Env):
         if self.position != 0:
             trade_closed, trade_reward, exit_price = self._check_tp_sl_intrabar(high, low)
             
+            # --- Check Time Limit (4 Days = 96 Hours) ---
+            if not trade_closed and self.bars_held >= 96:
+                trade_closed = True
+                exit_price = price
+                pnl = (exit_price - self.entry_price) if self.position > 0 else (self.entry_price - exit_price)
+                if pnl > 0:
+                    trade_reward = pnl / (self.entry_atr * 3.0)  # scale positive PnL to max +1.0
+                else:
+                    trade_reward = pnl / (self.entry_atr * 0.75) # scale negative PnL to min -1.0
+                    
             if trade_closed:
                 self._close_position(exit_price)
                 if trade_reward > 0:
