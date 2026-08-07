@@ -30,10 +30,13 @@ MAIN_ASSET = os.getenv("MAIN_ASSET", "EURUSD")
 
 OUTPUT_PATH.mkdir(parents=True, exist_ok=True)
 
-def add_triple_barrier_labels(df, atr_window=14, tp_mult=3.0, sl_mult=0.75, max_wait=48):
+def add_triple_barrier_labels(df, atr_window=14, 
+                              long_tp_mult=2.5, long_sl_mult=1.0, 
+                              short_tp_mult=4.0, short_sl_mult=1.0, 
+                              max_wait=48):
     """
-    Implements a Triple Barrier Method using dynamic ATR.
-    tp_mult=3.0 and sl_mult=0.75 enforces the R/R = 1:4 rule.
+    Implements a decoupled Triple Barrier Method using dynamic ATR.
+    Longs use 1:2.5 R/R. Shorts use 1:4 R/R.
     """
     # 1. Calculate Average True Range (ATR)
     high_low = df['High'] - df['Low']
@@ -47,7 +50,8 @@ def add_triple_barrier_labels(df, atr_window=14, tp_mult=3.0, sl_mult=0.75, max_
     low_arr = df['Low'].values
     atr_arr = df['ATR'].values
 
-    labels = np.zeros(len(df)) # Class 0: Flat
+    labels_long = np.zeros(len(df))
+    labels_short = np.zeros(len(df))
 
     # 2. Evaluate paths
     for i in range(len(df) - max_wait):
@@ -55,27 +59,47 @@ def add_triple_barrier_labels(df, atr_window=14, tp_mult=3.0, sl_mult=0.75, max_
             continue
 
         current_price = close_arr[i]
-        upper_barrier = current_price + (tp_mult * atr_arr[i])
-        lower_barrier = current_price - (sl_mult * atr_arr[i])
+        
+        # Long Barriers
+        tp_long = current_price + (long_tp_mult * atr_arr[i])
+        sl_long = current_price - (long_sl_mult * atr_arr[i])
+        
+        # Short Barriers
+        tp_short = current_price - (short_tp_mult * atr_arr[i])
+        sl_short = current_price + (short_sl_mult * atr_arr[i])
 
-        label = 0 
+        # Evaluate Long Path
+        label_l = 0
         for j in range(i + 1, i + 1 + max_wait):
-            hit_upper = high_arr[j] >= upper_barrier
-            hit_lower = low_arr[j] <= lower_barrier
-
-            if hit_upper and hit_lower:
-                label = 0 
+            hit_tp = high_arr[j] >= tp_long
+            hit_sl = low_arr[j] <= sl_long
+            
+            if hit_tp and hit_sl:
+                break # Collision
+            elif hit_tp:
+                label_l = 1
                 break
-            elif hit_upper:
-                label = 1 # Up
+            elif hit_sl:
                 break
-            elif hit_lower:
-                label = 2 # Down
+        labels_long[i] = label_l
+
+        # Evaluate Short Path
+        label_s = 0
+        for j in range(i + 1, i + 1 + max_wait):
+            hit_tp = low_arr[j] <= tp_short
+            hit_sl = high_arr[j] >= sl_short
+            
+            if hit_tp and hit_sl:
+                break # Collision
+            elif hit_tp:
+                label_s = 1
                 break
+            elif hit_sl:
+                break
+        labels_short[i] = label_s
 
-        labels[i] = label
-
-    df['target'] = labels
+    df['target_long'] = labels_long
+    df['target_short'] = labels_short
     return df
 
 def add_all_features(df):

@@ -85,84 +85,45 @@ def main():
     val_1h = df_1h.iloc[val_idx - model.input_chunk_length : test_idx]
     test_1h = df_1h.iloc[test_idx - model.input_chunk_length :] 
 
-    print("\n[Phase 3] Supervised Contrastive Training (MTF)...")
-    train_score, val_score = model.train(
+    print("\n[Phase 3] Supervised Contrastive Training (Long Brain)...")
+    model_long = PricePredictor(num_classes=2)
+    train_score_l, val_score_l = model_long.train(
         (train_1h, df_4h, df_1d, df_1w),
         (val_1h, df_4h, df_1d, df_1w),
+        target_col="target_long",
         epochs=150,
         patience=20
     )
-    print(f"Final InfoNCE Loss - Train: {train_score:.4f} | Val: {val_score:.4f}")
+    print(f"Final InfoNCE Loss (Long) - Train: {train_score_l:.4f} | Val F1: {val_score_l:.4f}")
 
-    print("\n[Phase 3.5] Building Cluster Voting Map via Agglomerative Clustering...")
-    W = model.get_over_cluster_weights() # (6, hidden_size)
-    agg = AgglomerativeClustering(n_clusters=3)
-    macro_labels = agg.fit_predict(W) # (6,)
-    
-    # Get raw 6-dim predictions AND aligned labels from create_sequences
-    train_result = model.create_sequences(train_1h, df_4h, df_1d, df_1w, clean_noise=True)
-    X1_t, X4_t, X1d_t, X1w_t, y_train = train_result[0], train_result[1], train_result[2], train_result[3], train_result[4]
-    
-    # Run batch prediction on training data (pass full DataFrames, including target)
-    train_c_probs = model.predict_batch((train_1h, df_4h, df_1d, df_1w)) # (N, 6)
-    train_micro_preds = train_c_probs.argmax(axis=1) # (N,)
-    train_macro_preds = np.array([macro_labels[m] for m in train_micro_preds]) # (N,)
-    
-    # y_train is already aligned from create_sequences
-    print(f"  train_c_probs shape: {train_c_probs.shape}, y_train shape: {y_train.shape}")
-    print(f"  Label distribution in y_train: {dict(zip(*np.unique(y_train, return_counts=True)))}")
-    
-    # Calculate baseline distributions
-    total_samples = len(y_train)
-    baseline_probs = {c: (y_train == c).sum() / total_samples for c in [0, 1, 2]}
-    
-    macro_to_target = {}
-    for macro_idx in range(3):
-        idx = (train_macro_preds == macro_idx)
-        if idx.sum() > 0:
-            cluster_labels = y_train[idx]
-            cluster_size = len(cluster_labels)
-            
-            best_class = 0
-            best_relative_density = -1
-            
-            for c in [0, 1, 2]:
-                class_count = (cluster_labels == c).sum()
-                if class_count == 0:
-                    continue
-                cluster_prob = class_count / cluster_size
-                relative_density = cluster_prob / baseline_probs[c]
-                
-                if relative_density > best_relative_density:
-                    best_relative_density = relative_density
-                    best_class = c
-                    
-            macro_to_target[macro_idx] = int(best_class)
-        else:
-            macro_to_target[macro_idx] = 0
-            
-    print(f"Macro-Cluster to Triple Barrier Label Mapping: {macro_to_target}")
-    
-    voting_map = {}
-    for micro_idx in range(6):
-        voting_map[micro_idx] = macro_to_target[macro_labels[micro_idx]]
-        
-    model.set_voting_map(voting_map)
+    print("\n[Phase 3.5] Supervised Contrastive Training (Short Brain)...")
+    model_short = PricePredictor(num_classes=2)
+    train_score_s, val_score_s = model_short.train(
+        (train_1h, df_4h, df_1d, df_1w),
+        (val_1h, df_4h, df_1d, df_1w),
+        target_col="target_short",
+        epochs=150,
+        patience=20
+    )
+    print(f"Final InfoNCE Loss (Short) - Train: {train_score_s:.4f} | Val F1: {val_score_s:.4f}")
 
-    model_path = models_dir / "model.pkl"
-    model.save(str(model_path))
-    
-    # Save the voting map for future inference!
-    import json
-    with open(models_dir / "voting_map.json", "w") as f:
-        json.dump(voting_map, f)
+    model_long.save(str(models_dir / "tft_long.pth"))
+    model_short.save(str(models_dir / "tft_short.pth"))
 
     print("\n[Phase 4] Training RL Agent via PPO...")
-    train_embeddings = model.predict_batch_embeddings((train_1h, df_4h, df_1d, df_1w))
-    val_embeddings = model.predict_batch_embeddings((val_1h, df_4h, df_1d, df_1w))
     
-    train_env = TradingRLEnv(train_embeddings, model.get_aligned_df(train_1h, df_4h, df_1d, df_1w))
-    val_env = TradingRLEnv(val_embeddings, model.get_aligned_df(val_1h, df_4h, df_1d, df_1w))
+    # Concatenate embeddings from both brains for the RL Agent
+    train_emb_long = model_long.predict_batch_embeddings((train_1h, df_4h, df_1d, df_1w))
+    train_emb_short = model_short.predict_batch_embeddings((train_1h, df_4h, df_1d, df_1w))
+    train_embeddings = np.concatenate([train_emb_long, train_emb_short], axis=1)
+    
+    val_emb_long = model_long.predict_batch_embeddings((val_1h, df_4h, df_1d, df_1w))
+    val_emb_short = model_short.predict_batch_embeddings((val_1h, df_4h, df_1d, df_1w))
+    val_embeddings = np.concatenate([val_emb_long, val_emb_short], axis=1)
+    
+    # The models must use the same aligned index logic, so we can use either one's get_aligned_df
+    train_env = TradingRLEnv(train_embeddings, model_long.get_aligned_df(train_1h, df_4h, df_1d, df_1w))
+    val_env = TradingRLEnv(val_embeddings, model_long.get_aligned_df(val_1h, df_4h, df_1d, df_1w))
     
     train_env = Monitor(train_env)
     val_env = Monitor(val_env)
@@ -187,8 +148,11 @@ def main():
 
     print("\n[Phase 5] Running out-of-sample backtest with RL Agent...")
     
-    test_embeddings = model.predict_batch_embeddings((test_1h, df_4h, df_1d, df_1w))
-    test_env = TradingRLEnv(test_embeddings, model.get_aligned_df(test_1h, df_4h, df_1d, df_1w))
+    test_emb_long = model_long.predict_batch_embeddings((test_1h, df_4h, df_1d, df_1w))
+    test_emb_short = model_short.predict_batch_embeddings((test_1h, df_4h, df_1d, df_1w))
+    test_embeddings = np.concatenate([test_emb_long, test_emb_short], axis=1)
+    
+    test_env = TradingRLEnv(test_embeddings, model_long.get_aligned_df(test_1h, df_4h, df_1d, df_1w))
     
     obs, _ = test_env.reset()
     done = False

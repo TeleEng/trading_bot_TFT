@@ -3,14 +3,16 @@ from gymnasium import spaces
 import numpy as np
 
 class TradingRLEnv(gym.Env):
-    def __init__(self, embeddings, df, tp_mult=3.0, sl_mult=0.75, initial_capital=10000,
+    def __init__(self, embeddings, df, long_tp_mult=2.5, long_sl_mult=1.0, short_tp_mult=4.0, short_sl_mult=1.0, initial_capital=10000,
                  spread_pips=1.0, slippage_pips=0.3, swap_pips_per_day=0.5):
         super(TradingRLEnv, self).__init__()
         self.embeddings = embeddings
         self.df = df
         
-        self.tp_mult = tp_mult
-        self.sl_mult = sl_mult
+        self.long_tp_mult = long_tp_mult
+        self.long_sl_mult = long_sl_mult
+        self.short_tp_mult = short_tp_mult
+        self.short_sl_mult = short_sl_mult
         self.initial_capital = initial_capital
         
         # Realistic trading costs
@@ -21,9 +23,9 @@ class TradingRLEnv(gym.Env):
         # 0: Flat, 1: Long, 2: Short
         self.action_space = spaces.Discrete(3)
         
-        # Observation: 128 (emb) + 1 (local_ratio) + 10 (last 5 actions+rewards) + 1 (direction) + 1 (unrealized_return) = 141
-        emb_size = embeddings.shape[1] if len(embeddings) > 0 else 128
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(emb_size + 13,), dtype=np.float32)
+        # Observation: emb_size + 1 (local_ratio) + 15 (last 5 trades: action, reward, exit_reason) + 1 (direction) + 1 (unrealized_return)
+        emb_size = embeddings.shape[1] if len(embeddings) > 0 else 256
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(emb_size + 18,), dtype=np.float32)
         
         self.reset()
         
@@ -56,7 +58,7 @@ class TradingRLEnv(gym.Env):
         
         self.consecutive_losses = 0
         self.bars_flat = 0
-        self.trade_history = [(0.0, 0.0)] * 5
+        self.trade_history = [(0.0, 0.0, 0.0)] * 5
         self.portfolio_history = [self.initial_capital] * 5
         
         self.last_portfolio_value = self.initial_capital
@@ -72,8 +74,8 @@ class TradingRLEnv(gym.Env):
         local_ratio = self.portfolio_value / past_val
         
         hist = []
-        for action, reward in self.trade_history[-5:]:
-            hist.extend([float(action), float(reward)])
+        for action, reward, reason in self.trade_history[-5:]:
+            hist.extend([float(action), float(reward), float(reason)])
             
         current_row = self.df.iloc[self.current_step]
         price = current_row['Close']
@@ -97,10 +99,11 @@ class TradingRLEnv(gym.Env):
     def _check_tp_sl_intrabar(self, high, low):
         """Check TP/SL using High/Low of the bar (intra-bar simulation).
         Uses dynamic SL (moves to 25% TP if 50% TP is hit).
-        Returns: (trade_closed, trade_reward, exit_price)
+        Returns: (trade_closed, trade_reward, exit_price, exit_reason)
+        exit_reason: 1 (TP), -1 (SL), 0 (None/Timeout)
         """
         if self.position == 0 or self.entry_atr <= 0:
-            return False, 0.0, 0.0
+            return False, 0.0, 0.0, 0
             
         if self.position > 0:  # Long
             # If high reaches half TP, move SL up
@@ -111,10 +114,10 @@ class TradingRLEnv(gym.Env):
             if low <= self.current_sl_price:
                 exit_price = self._get_fill_price(self.current_sl_price, -1)  # selling to close
                 reward = 0.5 if self.current_sl_price > self.entry_price else -1.0
-                return True, reward, exit_price
+                return True, reward, exit_price, -1
             elif high >= self.tp_price:
                 exit_price = self._get_fill_price(self.tp_price, -1)
-                return True, 1.0, exit_price
+                return True, 1.0, exit_price, 1
                 
         else:  # Short
             # If low reaches half TP, move SL down
@@ -125,12 +128,12 @@ class TradingRLEnv(gym.Env):
             if high >= self.current_sl_price:
                 exit_price = self._get_fill_price(self.current_sl_price, 1)  # buying to close
                 reward = 0.5 if self.current_sl_price < self.entry_price else -1.0
-                return True, reward, exit_price
+                return True, reward, exit_price, -1
             elif low <= self.tp_price:
                 exit_price = self._get_fill_price(self.tp_price, 1)
-                return True, 1.0, exit_price
+                return True, 1.0, exit_price, 1
                 
-        return False, 0.0, 0.0
+        return False, 0.0, 0.0, 0
         
     def _close_position(self, exit_price):
         """Close position and update capital with PnL."""
@@ -158,14 +161,16 @@ class TradingRLEnv(gym.Env):
         self.bars_held = 0
         
         # Initialize dynamic TP/SL levels
-        tp_distance = self.tp_mult * atr
-        sl_distance = self.sl_mult * atr
         if direction > 0:
+            tp_distance = self.long_tp_mult * atr
+            sl_distance = self.long_sl_mult * atr
             self.current_sl_price = fill_price - sl_distance
             self.tp_price = fill_price + tp_distance
             self.half_tp_price = fill_price + (tp_distance * 0.5)
             self.secured_sl_price = fill_price + (tp_distance * 0.25)
         else:
+            tp_distance = self.short_tp_mult * atr
+            sl_distance = self.short_sl_mult * atr
             self.current_sl_price = fill_price + sl_distance
             self.tp_price = fill_price - tp_distance
             self.half_tp_price = fill_price - (tp_distance * 0.5)
@@ -197,17 +202,27 @@ class TradingRLEnv(gym.Env):
         streak_penalty = 0.0
         # --- Check TP/SL using High/Low and fixed entry ATR ---
         if self.position != 0:
-            trade_closed, trade_reward, exit_price = self._check_tp_sl_intrabar(high, low)
+            trade_closed, trade_reward, exit_price, exit_reason = self._check_tp_sl_intrabar(high, low)
             
             # --- Check Time Limit (4 Days = 96 Hours) ---
             if not trade_closed and self.bars_held >= 96:
                 trade_closed = True
                 exit_price = price
+                exit_reason = 0 # Timeout
                 pnl = (exit_price - self.entry_price) if self.position > 0 else (self.entry_price - exit_price)
-                if pnl > 0:
-                    trade_reward = pnl / (self.entry_atr * 3.0)  # scale positive PnL to max +1.0
+                
+                # Dynamic timeout scaling
+                if self.position > 0:
+                    tp_dist = self.entry_atr * self.long_tp_mult
+                    sl_dist = self.entry_atr * self.long_sl_mult
                 else:
-                    trade_reward = pnl / (self.entry_atr * 0.75) # scale negative PnL to min -1.0
+                    tp_dist = self.entry_atr * self.short_tp_mult
+                    sl_dist = self.entry_atr * self.short_sl_mult
+                    
+                if pnl > 0:
+                    trade_reward = pnl / tp_dist  # scale positive PnL to max +1.0
+                else:
+                    trade_reward = pnl / sl_dist # scale negative PnL to min -1.0
                     
             if trade_closed:
                 self._close_position(exit_price)
@@ -220,7 +235,7 @@ class TradingRLEnv(gym.Env):
                     
         if trade_closed:
             last_dir = 1.0 if current_direction > 0 else 2.0
-            self.trade_history.append((last_dir, trade_reward))
+            self.trade_history.append((last_dir, trade_reward, exit_reason))
             self.trade_history.pop(0)
             self.portfolio_history.append(self.portfolio_value)
             self.portfolio_history.pop(0)

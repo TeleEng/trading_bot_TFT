@@ -92,7 +92,7 @@ class InstanceNormalization1D(nn.Module):
 
 
 class MultiTimeframeTFT(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, cat_indices=None, num_over_clusters=6, dropout=0.3):
+    def __init__(self, input_size, hidden_size, num_layers, cat_indices=None, num_over_clusters=6, dropout=0.3, num_classes=3):
         super(MultiTimeframeTFT, self).__init__()
         self.norm = InstanceNormalization1D()
         
@@ -155,7 +155,7 @@ class MultiTimeframeTFT(nn.Module):
             nn.Linear(hidden_size, hidden_size // 2),
             nn.ReLU(inplace=True),
             nn.Dropout(dropout),
-            nn.Linear(hidden_size // 2, 3)
+            nn.Linear(hidden_size // 2, num_classes)
         )
 
     def process_branch(self, x, grn_layer, lstm_layer):
@@ -199,10 +199,11 @@ class MultiTimeframeTFT(nn.Module):
         return h, z, c_over, logits
 
 class PricePredictor:
-    def __init__(self, input_chunk_length=52, hidden_size=128, num_layers=3):
+    def __init__(self, input_chunk_length=52, hidden_size=128, num_layers=3, num_classes=2):
         self.input_chunk_length = input_chunk_length
         self.hidden_size = hidden_size
         self.num_layers = num_layers
+        self.num_classes = num_classes
         if not torch.cuda.is_available():
             raise RuntimeError("GPU requested but CUDA is not available!")
         self.device = torch.device('cuda')
@@ -212,13 +213,13 @@ class PricePredictor:
         self.history = {'train_loss': [], 'val_loss': []}
         self.augmenter = TimeSeriesAugmenter(self.device)
 
-    def create_sequences(self, df_1h, df_4h, df_1d, df_1w, clean_noise=False):
-        features_1h = df_1h.drop(columns=['target'], errors='ignore').values
-        features_4h = df_4h.drop(columns=['target'], errors='ignore').values
-        features_1d = df_1d.drop(columns=['target'], errors='ignore').values
-        features_1w = df_1w.drop(columns=['target'], errors='ignore').values
+    def create_sequences(self, df_1h, df_4h, df_1d, df_1w, clean_noise=False, target_col='target_long'):
+        features_1h = df_1h.drop(columns=['target_long', 'target_short', 'target'], errors='ignore').values
+        features_4h = df_4h.drop(columns=['target_long', 'target_short', 'target'], errors='ignore').values
+        features_1d = df_1d.drop(columns=['target_long', 'target_short', 'target'], errors='ignore').values
+        features_1w = df_1w.drop(columns=['target_long', 'target_short', 'target'], errors='ignore').values
         
-        target = df_1h['target'].values if 'target' in df_1h.columns else None
+        target = df_1h[target_col].values if target_col in df_1h.columns else None
         
         X_1h, X_4h, X_1d, X_1w, y = [], [], [], [], []
         
@@ -291,12 +292,12 @@ class PricePredictor:
                 valid_mask[i] = True
         return df_1h.iloc[valid_mask]
 
-    def train(self, dfs_train, dfs_val, epochs=50, batch_size=256, patience=20):
+    def train(self, dfs_train, dfs_val, target_col='target_long', epochs=50, batch_size=256, patience=20):
         df_1h_t, df_4h_t, df_1d_t, df_1w_t = dfs_train
         df_1h_v, df_4h_v, df_1d_v, df_1w_v = dfs_val
 
-        X1_t, X4_t, X1d_t, X1w_t, y_t = self.create_sequences(df_1h_t, df_4h_t, df_1d_t, df_1w_t, clean_noise=True)
-        X1_v, X4_v, X1d_v, X1w_v, y_v = self.create_sequences(df_1h_v, df_4h_v, df_1d_v, df_1w_v, clean_noise=False)
+        X1_t, X4_t, X1d_t, X1w_t, y_t = self.create_sequences(df_1h_t, df_4h_t, df_1d_t, df_1w_t, clean_noise=True, target_col=target_col)
+        X1_v, X4_v, X1d_v, X1w_v, y_v = self.create_sequences(df_1h_v, df_4h_v, df_1d_v, df_1w_v, clean_noise=False, target_col=target_col)
 
         X1_t = torch.FloatTensor(X1_t).to(self.device)
         X4_t = torch.FloatTensor(X4_t).to(self.device)
@@ -320,7 +321,8 @@ class PricePredictor:
             input_size=input_size, 
             hidden_size=self.hidden_size, 
             num_layers=self.num_layers,
-            cat_indices=cat_indices
+            cat_indices=cat_indices,
+            num_classes=self.num_classes
         ).to(self.device)
 
         if torch.cuda.device_count() > 1:
@@ -337,11 +339,12 @@ class PricePredictor:
 
         criterion = SupervisedContrastiveClusteringLoss(batch_size=batch_size)
         
-        # Class-weighted cross-entropy to combat the 53% Down imbalance
+        # Class-weighted cross-entropy to combat imbalance
         # Compute inverse-frequency weights from training labels
-        label_counts = torch.bincount(y_t, minlength=3).float()
+        label_counts = torch.bincount(y_t, minlength=self.num_classes).float()
         class_weights = (1.0 / (label_counts + 1e-6))
-        class_weights = class_weights / class_weights.sum() * 3.0  # normalize so they sum to num_classes
+        class_weights = class_weights / class_weights.sum() * float(self.num_classes)  # normalize
+
         class_weights = class_weights.to(self.device)
         ce_criterion = nn.CrossEntropyLoss(weight=class_weights)
         
@@ -586,7 +589,8 @@ class PricePredictor:
             input_size=input_size, 
             hidden_size=self.hidden_size, 
             num_layers=self.num_layers,
-            cat_indices=cat_indices
+            cat_indices=cat_indices,
+            num_classes=self.num_classes
         ).to(self.device)
         self.model.load_state_dict(checkpoint['state_dict'])
         
