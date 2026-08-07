@@ -120,14 +120,23 @@ if all(p.exists() for p in [df_1h_path, df_4h_path, df_1d_path, df_1w_path]):
     
     # Step 5: Label distribution
     print("\n[5] LABEL DISTRIBUTION (1H base):")
-    if 'target' in df_1h.columns:
-        counts = df_1h['target'].value_counts().sort_index()
-        for label, count in counts.items():
+    if 'target_long' in df_1h.columns and 'target_short' in df_1h.columns:
+        counts_long = df_1h['target_long'].value_counts().sort_index()
+        counts_short = df_1h['target_short'].value_counts().sort_index()
+        
+        print("  --- Long Target ---")
+        for label, count in counts_long.items():
             pct = count / len(df_1h) * 100
-            name = {0: 'Flat', 1: 'Up', 2: 'Down'}.get(int(label), f'Label {label}')
+            name = {0: 'Flat', 1: 'Up'}.get(int(label), f'Label {label}')
+            print(f"  {name} ({int(label)}): {count} ({pct:.1f}%)")
+            
+        print("  --- Short Target ---")
+        for label, count in counts_short.items():
+            pct = count / len(df_1h) * 100
+            name = {0: 'Flat', 1: 'Down'}.get(int(label), f'Label {label}')
             print(f"  {name} ({int(label)}): {count} ({pct:.1f}%)")
     else:
-        print("  No 'target' column found")
+        print("  No 'target_long' or 'target_short' column found")
 else:
     print("  Processed files not found. Run the pipeline first.")
 

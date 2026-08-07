@@ -23,8 +23,10 @@ class TestTradingRLEnv(unittest.TestCase):
         self.env = TradingRLEnv(
             embeddings=self.embeddings,
             df=self.df,
-            tp_mult=3.0,
-            sl_mult=0.75,
+            long_tp_mult=2.5,
+            long_sl_mult=1.0,
+            short_tp_mult=4.0,
+            short_sl_mult=1.0,
             initial_capital=10000,
             spread_pips=1.0,
             slippage_pips=0.0, # no random slippage for deterministic testing
@@ -42,10 +44,10 @@ class TestTradingRLEnv(unittest.TestCase):
 
     def test_position_sizing(self):
         # Risk amount = 10000 * 0.02 = 200
-        # Risk per unit = ATR (0.0020) * 0.75 = 0.0015
-        # Ideal qty = 200 / 0.0015 = 133333.33
+        # Risk per unit = ATR (0.0020) * 1.0 = 0.0020
+        # Ideal qty = 200 / 0.0020 = 100000.0
         self.env._open_position(1.1000, 0.0020, 1) # Long
-        self.assertAlmostEqual(self.env.position, 133333.33, places=2)
+        self.assertAlmostEqual(self.env.position, 100000.0, places=2)
         
     def test_overnight_swap_deduction(self):
         self.env._open_position(1.1000, 0.0020, 1)
@@ -53,8 +55,8 @@ class TestTradingRLEnv(unittest.TestCase):
         self.env.step(0) # hold for 1 bar
         
         # Swap cost per bar = (0.5 * 0.0001) / 24.0 = 2.0833e-6 per unit
-        # Qty = 133333.33 -> Total swap cost = 0.2777
-        expected_cap = initial_cap - (133333.33 * 2.083333e-6)
+        # Qty = 100000.0 -> Total swap cost = 0.20833
+        expected_cap = initial_cap - (100000.0 * 2.083333e-6)
         self.assertAlmostEqual(self.env.capital, expected_cap, places=2)
         
     def test_agent_action_lockdown(self):
@@ -71,10 +73,10 @@ class TestTradingRLEnv(unittest.TestCase):
         # Trigger entry long
         self.env.step(1) 
         # Entry price = 1.10005
-        # SL = entry - 0.0015 = 1.09855
+        # SL = entry - 0.0020 = 1.09805
         
         # Modify the next row in the dataframe to hit SL
-        self.env.df.at[self.env.current_step, 'Low'] = 1.0980
+        self.env.df.at[self.env.current_step, 'Low'] = 1.0970
         
         # Take step 1 (which will read row 1)
         obs, reward, done, trunc, info = self.env.step(0)
@@ -88,12 +90,12 @@ class TestTradingRLEnv(unittest.TestCase):
         # Trigger entry long
         self.env.step(1) 
         # Entry = 1.10005
-        # TP = entry + (3 * 0.0020) = 1.10605
+        # TP = entry + (2.5 * 0.0020) = 1.10505
         
         # Modify the next row in the dataframe to hit TP
         # We must also raise the Low so it doesn't hit SL or secured SL!
         self.env.df.at[self.env.current_step, 'Low'] = 1.1020
-        self.env.df.at[self.env.current_step, 'High'] = 1.1070
+        self.env.df.at[self.env.current_step, 'High'] = 1.1060
         
         self.env.step(0)
         
@@ -103,17 +105,17 @@ class TestTradingRLEnv(unittest.TestCase):
     def test_trailing_stop_activation_and_hit(self):
         self.env.step(1) # Enter long
         # Entry = 1.10005
-        # TP = entry + 0.0060 = 1.10605
-        # 50% TP = entry + 0.0030 = 1.10305
-        # 25% TP SL = entry + 0.0015 = 1.10155
+        # TP = entry + 0.0050 = 1.10505
+        # 50% TP = entry + 0.0025 = 1.10255
+        # 25% TP SL = entry + 0.00125 = 1.10130
         
         # Step 1: Hit 50% TP but don't hit full TP, and keep Low high enough to not hit secured SL
-        self.env.df.at[self.env.current_step, 'High'] = 1.1035
-        self.env.df.at[self.env.current_step, 'Low'] = 1.1020
+        self.env.df.at[self.env.current_step, 'High'] = 1.1030
+        self.env.df.at[self.env.current_step, 'Low'] = 1.1015
         self.env.step(0)
         
-        # SL should now be exactly 1.10155
-        self.assertAlmostEqual(self.env.current_sl_price, 1.10155, places=5)
+        # SL should now be exactly 1.10130
+        self.assertAlmostEqual(self.env.current_sl_price, 1.10130, places=5)
         
         # Step 2: Hit new secured SL on the next bar
         self.env.df.at[self.env.current_step, 'High'] = 1.1020
@@ -124,21 +126,23 @@ class TestTradingRLEnv(unittest.TestCase):
         self.assertEqual(self.env.position, 0)
         # Reward should be 0.5 for securing profit
         self.assertEqual(self.env.trade_history[-1][1], 0.5)
+        # Exit reason is -1 because it was stopped out (even in profit)
+        self.assertEqual(self.env.trade_history[-1][2], -1)
 
     def test_short_trailing_stop_activation(self):
         self.env.step(2) # Enter short
         # Entry = 1.09995
-        # TP = entry - 0.0060 = 1.09395
-        # 50% TP = entry - 0.0030 = 1.09695
-        # 25% TP SL = entry - 0.0015 = 1.09845
+        # TP = entry - 0.0080 = 1.09195
+        # 50% TP = entry - 0.0040 = 1.09595
+        # 25% TP SL = entry - 0.0020 = 1.09795
         
         # Step 1: Hit 50% TP downwards
-        self.env.df.at[self.env.current_step, 'Low'] = 1.0960
-        self.env.df.at[self.env.current_step, 'High'] = 1.0980
+        self.env.df.at[self.env.current_step, 'Low'] = 1.0950
+        self.env.df.at[self.env.current_step, 'High'] = 1.0970
         self.env.step(0)
         
-        # SL should now be exactly 1.09845
-        self.assertAlmostEqual(self.env.current_sl_price, 1.09845, places=5)
+        # SL should now be exactly 1.09795
+        self.assertAlmostEqual(self.env.current_sl_price, 1.09795, places=5)
         
         # Step 2: Hit new secured SL
         self.env.df.at[self.env.current_step, 'High'] = 1.0990
@@ -148,6 +152,7 @@ class TestTradingRLEnv(unittest.TestCase):
         # Trade should be closed
         self.assertEqual(self.env.position, 0)
         self.assertEqual(self.env.trade_history[-1][1], 0.5)
+        self.assertEqual(self.env.trade_history[-1][2], -1)
 
 if __name__ == '__main__':
     unittest.main()
