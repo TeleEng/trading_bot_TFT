@@ -73,11 +73,6 @@ def main():
         df_1d = pd.read_csv(file_1d, index_col=0, parse_dates=True)
         df_1w = pd.read_csv(file_1w, index_col=0, parse_dates=True)
     
-    # Temporarily limit data for local run
-    df_1h = df_1h.iloc[-int(len(df_1h)*0.25):]
-    df_4h = df_4h[df_4h.index >= df_1h.index[0]]
-    df_1d = df_1d[df_1d.index >= df_1h.index[0]]
-    df_1w = df_1w[df_1w.index >= df_1h.index[0]]
 
     val_idx = int(len(df_1h) * 0.6)
     test_idx = int(len(df_1h) * 0.8)
