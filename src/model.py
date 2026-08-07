@@ -572,9 +572,10 @@ class PricePredictor:
         return base_model.over_cluster_head[3].weight.data.cpu().numpy()
 
     def save(self, path):
+        base_model = self.model.module if isinstance(self.model, nn.DataParallel) else self.model
         torch.save({
-            'state_dict': self.model.state_dict(),
-            'cat_indices': self.model.cat_indices
+            'state_dict': base_model.state_dict(),
+            'cat_indices': base_model.cat_indices
         }, path)
 
     def load(self, path, input_size):
