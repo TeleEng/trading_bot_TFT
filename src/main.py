@@ -28,6 +28,10 @@ from sklearn.metrics import confusion_matrix, classification_report
 def main():
     print("="*60)
     print("TRADING BOT - FULL PIPELINE (SELF-SUPERVISED MTF)")
+    
+    import datetime, os
+    last_edited = datetime.datetime.fromtimestamp(os.path.getmtime(__file__)).strftime('%Y-%m-%d %H:%M:%S')
+    print(f"Codebase Last Edited: {last_edited}")
     print("="*60)
 
     base_dir = Path(__file__).resolve().parent.parent
