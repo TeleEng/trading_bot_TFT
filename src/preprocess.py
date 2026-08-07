@@ -119,6 +119,11 @@ def add_all_features(df):
     # Momentum
     df['Momentum_10'] = df['Close'] - df['Close'].shift(10)
     
+    # Categorical Time Features for TFT
+    df['Hour'] = df.index.hour
+    df['DayOfWeek'] = df.index.dayofweek
+
+    
     # 6-Hour Triple Barrier
     df = add_triple_barrier_labels(df)
     

@@ -13,6 +13,71 @@ from augment import TimeSeriesAugmenter
 from loss import SupervisedContrastiveClusteringLoss
 from pytorch_enn import PyTorchENN
 
+
+class GLU(nn.Module):
+    def __init__(self, input_size):
+        super().__init__()
+        self.fc = nn.Linear(input_size, input_size * 2)
+    def forward(self, x):
+        return nn.functional.glu(self.fc(x), dim=-1)
+
+class GRN(nn.Module):
+    def __init__(self, input_size, hidden_size, dropout=0.2):
+        super().__init__()
+        self.fc1 = nn.Linear(input_size, hidden_size)
+        self.elu = nn.ELU()
+        self.fc2 = nn.Linear(hidden_size, hidden_size)
+        self.dropout = nn.Dropout(dropout)
+        self.glu = GLU(hidden_size)
+        self.skip = nn.Linear(input_size, hidden_size) if input_size != hidden_size else nn.Identity()
+        self.norm = nn.LayerNorm(hidden_size)
+
+    def forward(self, x):
+        skip = self.skip(x)
+        x = self.fc1(x)
+        x = self.elu(x)
+        x = self.fc2(x)
+        x = self.dropout(x)
+        x = self.glu(x)
+        return self.norm(skip + x)
+
+class InterpretableMultiHeadAttention(nn.Module):
+    def __init__(self, embed_dim, num_heads, dropout=0.2):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.num_heads = num_heads
+        self.head_dim = embed_dim // num_heads
+        self.q_proj = nn.Linear(embed_dim, embed_dim)
+        self.k_proj = nn.Linear(embed_dim, embed_dim)
+        self.v_proj = nn.Linear(embed_dim, self.head_dim)
+        self.out_proj = nn.Linear(self.head_dim, embed_dim)
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, q, k, v):
+        batch_size, seq_len, _ = q.size()
+        Q = self.q_proj(q).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        K = self.k_proj(k).view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
+        V = self.v_proj(v).unsqueeze(1).expand(-1, self.num_heads, -1, -1)
+        
+        scores = torch.matmul(Q, K.transpose(-2, -1)) / (self.head_dim ** 0.5)
+        attn = torch.softmax(scores, dim=-1)
+        attn = self.dropout(attn)
+        context = torch.matmul(attn, V).mean(dim=1)
+        return self.out_proj(context)
+
+class PositionalEncoding(nn.Module):
+    def __init__(self, d_model, max_len=5000):
+        super().__init__()
+        pe = torch.zeros(max_len, d_model)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
+        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-np.log(10000.0) / d_model))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        return x + self.pe[:x.size(1), :]
+
 class InstanceNormalization1D(nn.Module):
     def __init__(self, eps=1e-5):
         super(InstanceNormalization1D, self).__init__()
@@ -25,49 +90,47 @@ class InstanceNormalization1D(nn.Module):
         std = torch.where(std > 1e-4, std, torch.ones_like(std))
         return (x - mean) / std
 
-class VariableSelectionNetwork(nn.Module):
-    def __init__(self, num_features, hidden_size, dropout=0.2):
-        super(VariableSelectionNetwork, self).__init__()
-        self.weight_network = nn.Sequential(
-            nn.Linear(num_features, hidden_size),
-            nn.ELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_size, num_features),
-            nn.Softmax(dim=-1)
-        )
-    
-    def forward(self, x):
-        weights = self.weight_network(x)
-        return x * weights * x.shape[-1]
 
 class MultiTimeframeTFT(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, num_over_clusters=6, dropout=0.3):
+    def __init__(self, input_size, hidden_size, num_layers, cat_indices=None, num_over_clusters=6, dropout=0.3):
         super(MultiTimeframeTFT, self).__init__()
         self.norm = InstanceNormalization1D()
         
-        # 4 Variable Selection Networks
-        self.vsn_1h = VariableSelectionNetwork(input_size, hidden_size, dropout)
-        self.vsn_4h = VariableSelectionNetwork(input_size, hidden_size, dropout)
-        self.vsn_1d = VariableSelectionNetwork(input_size, hidden_size, dropout)
-        self.vsn_1w = VariableSelectionNetwork(input_size, hidden_size, dropout)
+        self.cat_indices = cat_indices if cat_indices is not None else []
+        self.cont_indices = [i for i in range(input_size) if i not in self.cat_indices]
+        cont_size = len(self.cont_indices)
         
-        # 4 LSTMs
-        self.lstm_1h = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout if num_layers > 1 else 0)
-        self.lstm_4h = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout if num_layers > 1 else 0)
-        self.lstm_1d = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout if num_layers > 1 else 0)
-        self.lstm_1w = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=dropout if num_layers > 1 else 0)
+        # Categorical Embeddings
+        self.hour_embedding = nn.Embedding(24, hidden_size) if len(self.cat_indices) > 0 else None
+        self.day_embedding = nn.Embedding(7, hidden_size) if len(self.cat_indices) > 1 else None
         
-        # We will apply attention independently to the 1h sequence, as it's the most granular
-        self.attention_1h = nn.MultiheadAttention(embed_dim=hidden_size, num_heads=8, dropout=dropout, batch_first=True)
+        # Continuous Feature Projection
+        self.cont_proj = nn.Linear(cont_size, hidden_size)
+        
+        # VSN expects concatenated features. If we have 2 cats and 1 cont proj, that's 3 * hidden_size input.
+        # But for simplicity, we can just sum them up or process them. Let's process continuous directly.
+        
+        # GRN Encoders for each branch
+        self.grn_1h = GRN(hidden_size, hidden_size, dropout=dropout)
+        self.grn_4h = GRN(hidden_size, hidden_size, dropout=dropout)
+        self.grn_1d = GRN(hidden_size, hidden_size, dropout=dropout)
+        self.grn_1w = GRN(hidden_size, hidden_size, dropout=dropout)
+        
+        # LSTMs
+        self.lstm_1h = nn.LSTM(hidden_size, hidden_size, num_layers, batch_first=True, dropout=dropout if num_layers > 1 else 0)
+        self.lstm_4h = nn.LSTM(hidden_size, hidden_size, num_layers, batch_first=True, dropout=dropout if num_layers > 1 else 0)
+        self.lstm_1d = nn.LSTM(hidden_size, hidden_size, num_layers, batch_first=True, dropout=dropout if num_layers > 1 else 0)
+        self.lstm_1w = nn.LSTM(hidden_size, hidden_size, num_layers, batch_first=True, dropout=dropout if num_layers > 1 else 0)
+        
+        # Positional Encoding
+        self.pos_encoder = PositionalEncoding(hidden_size)
+        
+        # Interpretable Attention
+        self.attention_1h = InterpretableMultiHeadAttention(embed_dim=hidden_size, num_heads=8, dropout=dropout)
         self.attn_layer_norm = nn.LayerNorm(hidden_size)
         
         # Fusion Layer
-        self.fusion = nn.Sequential(
-            nn.Linear(hidden_size * 4, hidden_size),
-            nn.ReLU(inplace=True),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_size, hidden_size)
-        )
+        self.fusion = GRN(hidden_size * 4, hidden_size, dropout=dropout)
         
         # Instance Head for InfoNCE
         self.instance_head = nn.Sequential(
@@ -77,7 +140,7 @@ class MultiTimeframeTFT(nn.Module):
             nn.Linear(hidden_size, 32)
         )
         
-        # Over-Cluster Head (30 micro-clusters)
+        # Over-Cluster Head
         self.num_over_clusters = num_over_clusters
         self.over_cluster_head = nn.Sequential(
             nn.Linear(hidden_size, hidden_size, bias=False),
@@ -87,7 +150,7 @@ class MultiTimeframeTFT(nn.Module):
             nn.Softmax(dim=-1)
         )
         
-        # Direct Classification Head (3 classes: Flat/Up/Down)
+        # Classification Head
         self.classification_head = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.ReLU(inplace=True),
@@ -95,33 +158,40 @@ class MultiTimeframeTFT(nn.Module):
             nn.Linear(hidden_size // 2, 3)
         )
 
-    def process_branch(self, x, vsn_layer, lstm_layer):
-        x = self.norm(x)
-        x = vsn_layer(x)
-        lstm_out, _ = lstm_layer(x)
+    def process_branch(self, x, grn_layer, lstm_layer):
+        if len(self.cat_indices) > 0:
+            cont_x = x[:, :, self.cont_indices]
+            cat_x = x[:, :, self.cat_indices].long()
+            
+            x_emb = self.cont_proj(self.norm(cont_x))
+            x_emb += self.hour_embedding(cat_x[:, :, 0])
+            if len(self.cat_indices) > 1:
+                x_emb += self.day_embedding(cat_x[:, :, 1])
+        else:
+            x_emb = self.cont_proj(self.norm(x))
+            
+        x_grn = grn_layer(x_emb)
+        lstm_out, _ = lstm_layer(x_grn)
         return lstm_out
 
     def forward(self, x_1h, x_4h, x_1d, x_1w):
-        # 1. Process branches
-        out_1h = self.process_branch(x_1h, self.vsn_1h, self.lstm_1h)
-        out_4h = self.process_branch(x_4h, self.vsn_4h, self.lstm_4h)
-        out_1d = self.process_branch(x_1d, self.vsn_1d, self.lstm_1d)
-        out_1w = self.process_branch(x_1w, self.vsn_1w, self.lstm_1w)
+        out_1h = self.process_branch(x_1h, self.grn_1h, self.lstm_1h)
+        out_4h = self.process_branch(x_4h, self.grn_4h, self.lstm_4h)
+        out_1d = self.process_branch(x_1d, self.grn_1d, self.lstm_1d)
+        out_1w = self.process_branch(x_1w, self.grn_1w, self.lstm_1w)
         
-        # 2. Attention on the 1h (base timeframe)
-        attn_out, _ = self.attention_1h(out_1h, out_1h, out_1h)
+        # Positional Encoding + Attention
+        out_1h_pos = self.pos_encoder(out_1h)
+        attn_out = self.attention_1h(out_1h_pos, out_1h_pos, out_1h_pos)
         out_1h = self.attn_layer_norm(out_1h + attn_out)
         
-        # 3. Extract final embeddings
         h_1h = out_1h[:, -1, :]
         h_4h = out_4h[:, -1, :]
         h_1d = out_1d[:, -1, :]
         h_1w = out_1w[:, -1, :]
         
-        # 4. Fuse
         h = self.fusion(torch.cat((h_1h, h_4h, h_1d, h_1w), dim=1))
         
-        # 5. Heads
         z = self.instance_head(h)
         c_over = self.over_cluster_head(h)
         logits = self.classification_head(h)
@@ -241,10 +311,16 @@ class PricePredictor:
         y_v = torch.LongTensor(y_v).to(self.device)
 
         input_size = X1_t.shape[2]
+        
+        # Identify Categorical Indices
+        cat_cols = ['Hour', 'DayOfWeek']
+        cat_indices = [df_1h_t.columns.drop(['target'], errors='ignore').get_loc(c) for c in cat_cols if c in df_1h_t.columns]
+
         self.model = MultiTimeframeTFT(
             input_size=input_size, 
             hidden_size=self.hidden_size, 
-            num_layers=self.num_layers
+            num_layers=self.num_layers,
+            cat_indices=cat_indices
         ).to(self.device)
 
         if torch.cuda.device_count() > 1:
@@ -486,17 +562,22 @@ class PricePredictor:
         return base_model.over_cluster_head[3].weight.data.cpu().numpy()
 
     def save(self, path):
-        if isinstance(self.model, nn.DataParallel):
-            torch.save(self.model.module.state_dict(), path)
-        else:
-            torch.save(self.model.state_dict(), path)
-        print(f"Model saved to {path}")
+        torch.save({
+            'state_dict': self.model.state_dict(),
+            'cat_indices': self.model.cat_indices
+        }, path)
 
     def load(self, path, input_size):
-        self.model = MultiTimeframeTFT(input_size=input_size, hidden_size=self.hidden_size, num_layers=self.num_layers).to(self.device)
+        checkpoint = torch.load(path)
+        cat_indices = checkpoint.get('cat_indices', [])
         
-        state_dict = torch.load(path)
-        self.model.load_state_dict(state_dict)
+        self.model = MultiTimeframeTFT(
+            input_size=input_size, 
+            hidden_size=self.hidden_size, 
+            num_layers=self.num_layers,
+            cat_indices=cat_indices
+        ).to(self.device)
+        self.model.load_state_dict(checkpoint['state_dict'])
         
         if torch.cuda.device_count() > 1:
             self.model = nn.DataParallel(self.model)
