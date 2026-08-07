@@ -398,6 +398,11 @@ class PricePredictor:
                 for b_x1, b_x4, b_x1d, b_x1w, b_y in val_loader:
                     x1_i, x4_i, x1d_i, x1w_i = self.augmenter.augment(b_x1), b_x4, b_x1d, b_x1w
                     x1_j, x4_j, x1d_j, x1w_j = self.augmenter.augment(b_x1), b_x4, b_x1d, b_x1w
+                    
+                    if len(cat_indices) > 0:
+                        x1_i[:, :, cat_indices] = b_x1[:, :, cat_indices]
+                        x1_j[:, :, cat_indices] = b_x1[:, :, cat_indices]
+                        
                     _, z_i, c_i, logits_i = self.model(x1_i, x4_i, x1d_i, x1w_i)
                     _, z_j, c_j, logits_j = self.model(x1_j, x4_j, x1d_j, x1w_j)
                     loss_contrastive = criterion(z_i, z_j, c_i, c_j, b_y)
