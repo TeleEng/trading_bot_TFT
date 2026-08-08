@@ -53,8 +53,11 @@ class TradingRLEnv(gym.Env):
         
         self.current_sl_price = 0.0
         self.tp_price = 0.0
-        self.half_tp_price = 0.0
-        self.secured_sl_price = 0.0
+        
+        # Differential Sharpe Ratio trackers
+        self.dsr_A = 0.0
+        self.dsr_B = 0.0
+        self.dsr_eta = 0.01
         
         self.consecutive_losses = 0
         self.bars_flat = 0
@@ -106,29 +109,19 @@ class TradingRLEnv(gym.Env):
             return False, 0.0, 0.0, 0
             
         if self.position > 0:  # Long
-            # If high reaches half TP, move SL up
-            if high >= self.half_tp_price:
-                self.current_sl_price = max(self.current_sl_price, self.secured_sl_price)
-                
             # SL checked first (conservative: assume adverse move happens first)
             if low <= self.current_sl_price:
                 exit_price = self._get_fill_price(self.current_sl_price, -1)  # selling to close
-                reward = 0.5 if self.current_sl_price > self.entry_price else -1.0
-                return True, reward, exit_price, -1
+                return True, -1.0, exit_price, -1
             elif high >= self.tp_price:
                 exit_price = self._get_fill_price(self.tp_price, -1)
                 return True, 1.0, exit_price, 1
                 
         else:  # Short
-            # If low reaches half TP, move SL down
-            if low <= self.half_tp_price:
-                self.current_sl_price = min(self.current_sl_price, self.secured_sl_price)
-                
             # SL checked first (conservative)
             if high >= self.current_sl_price:
                 exit_price = self._get_fill_price(self.current_sl_price, 1)  # buying to close
-                reward = 0.5 if self.current_sl_price < self.entry_price else -1.0
-                return True, reward, exit_price, -1
+                return True, -1.0, exit_price, -1
             elif low <= self.tp_price:
                 exit_price = self._get_fill_price(self.tp_price, 1)
                 return True, 1.0, exit_price, 1
@@ -167,15 +160,11 @@ class TradingRLEnv(gym.Env):
             sl_distance = self.long_sl_mult * atr
             self.current_sl_price = fill_price - sl_distance
             self.tp_price = fill_price + tp_distance
-            self.half_tp_price = fill_price + (tp_distance * 0.5)
-            self.secured_sl_price = fill_price + (tp_distance * 0.25)
         else:
             tp_distance = self.short_tp_mult * atr
             sl_distance = self.short_sl_mult * atr
             self.current_sl_price = fill_price + sl_distance
             self.tp_price = fill_price - tp_distance
-            self.half_tp_price = fill_price - (tp_distance * 0.5)
-            self.secured_sl_price = fill_price - (tp_distance * 0.25)
         
     def step(self, action):
         if self.current_step >= len(self.df) - 1 or self.portfolio_value <= 0:
@@ -200,7 +189,6 @@ class TradingRLEnv(gym.Env):
             swap_cost = abs(self.position) * self.swap_per_bar
             self.capital -= swap_cost
         
-        streak_penalty = 0.0
         # --- Check TP/SL using High/Low and fixed entry ATR ---
         if self.position != 0:
             trade_closed, trade_reward, exit_price, exit_reason = self._check_tp_sl_intrabar(high, low)
@@ -210,29 +198,11 @@ class TradingRLEnv(gym.Env):
                 trade_closed = True
                 exit_price = price
                 exit_reason = 0 # Timeout
-                pnl = (exit_price - self.entry_price) if self.position > 0 else (self.entry_price - exit_price)
-                
-                # Dynamic timeout scaling
-                if self.position > 0:
-                    tp_dist = self.entry_atr * self.long_tp_mult
-                    sl_dist = self.entry_atr * self.long_sl_mult
-                else:
-                    tp_dist = self.entry_atr * self.short_tp_mult
-                    sl_dist = self.entry_atr * self.short_sl_mult
-                    
-                if pnl > 0:
-                    trade_reward = pnl / tp_dist  # scale positive PnL to max +1.0
-                else:
-                    trade_reward = pnl / sl_dist # scale negative PnL to min -1.0
+                # Fixed negative penalty for failing to capture momentum within the window
+                trade_reward = -0.5
                     
             if trade_closed:
                 self._close_position(exit_price)
-                if trade_reward > 0:
-                    self.consecutive_losses = 0
-                else:
-                    self.consecutive_losses += 1
-                    if self.consecutive_losses >= 3:
-                        streak_penalty = -(1.1 ** (self.consecutive_losses - 3))
                     
         if trade_closed:
             last_dir = 1.0 if current_direction > 0 else 2.0
@@ -245,8 +215,6 @@ class TradingRLEnv(gym.Env):
         # --- Handle agent action ---
         # The agent can ONLY act if there is NO open position.
         # Once in a trade, it MUST hold until TP or SL is hit.
-        action_reward = 0.0
-        
         if self.position == 0:
             self.bars_flat += 1
             target_direction = 0.0
@@ -255,8 +223,6 @@ class TradingRLEnv(gym.Env):
             
             if target_direction != 0:
                 self._open_position(price, atr, target_direction)
-                # Small penalty for entering a trade to discourage excessive trading
-                action_reward = -0.05
                 
             # Dampen portfolio history towards current value so local_ratio decays back to 1.0
             # This prevents the agent from sitting flat forever just because it had a good streak.
@@ -269,8 +235,26 @@ class TradingRLEnv(gym.Env):
         # Update portfolio value (mark-to-market at mid-price)
         self.portfolio_value = self.capital + (self.position * (price - self.entry_price) if self.position != 0 else 0)
         
-        step_reward = (self.portfolio_value - self.last_portfolio_value) / self.initial_capital
-        reward = step_reward * 100 + action_reward + (trade_reward * 5.0) + streak_penalty
+        # Calculate Differential Sharpe Ratio (DSR) as the step reward
+        step_return = (self.portfolio_value - self.last_portfolio_value) / self.last_portfolio_value
+        
+        # Update Exponential Moving Moments for DSR
+        delta_A = step_return - self.dsr_A
+        delta_B = (step_return ** 2) - self.dsr_B
+        
+        self.dsr_A += self.dsr_eta * delta_A
+        self.dsr_B += self.dsr_eta * delta_B
+        
+        # Calculate DSR (with safe denominator to prevent division by zero)
+        variance = self.dsr_B - (self.dsr_A ** 2)
+        safe_variance = max(variance, 1e-8)
+        
+        dsr_step_reward = (self.dsr_B * delta_A - 0.5 * self.dsr_A * delta_B) / (safe_variance ** 1.5)
+        
+        # Clip DSR reward to prevent extreme spikes during very low variance periods
+        dsr_step_reward = max(-5.0, min(dsr_step_reward, 5.0))
+        
+        reward = dsr_step_reward + (trade_reward * 5.0)
             
         if self.bars_flat > 48:
             reward -= 0.01

@@ -102,57 +102,22 @@ class TestTradingRLEnv(unittest.TestCase):
         self.assertEqual(self.env.position, 0)
         self.assertEqual(self.env.trade_history[-1][1], 1.0)
         
-    def test_trailing_stop_activation_and_hit(self):
+    def test_timeout_penalty(self):
         self.env.step(1) # Enter long
-        # Entry = 1.10005
-        # TP = entry + 0.0050 = 1.10505
-        # 50% TP = entry + 0.0025 = 1.10255
-        # 25% TP SL = entry + 0.00125 = 1.10130
         
-        # Step 1: Hit 50% TP but don't hit full TP, and keep Low high enough to not hit secured SL
-        self.env.df.at[self.env.current_step, 'High'] = 1.1030
-        self.env.df.at[self.env.current_step, 'Low'] = 1.1015
+        # Fast forward 96 bars
+        self.env.bars_held = 95
+        
+        # Step 0 to trigger timeout
         self.env.step(0)
         
-        # SL should now be exactly 1.10130
-        self.assertAlmostEqual(self.env.current_sl_price, 1.10130, places=5)
-        
-        # Step 2: Hit new secured SL on the next bar
-        self.env.df.at[self.env.current_step, 'High'] = 1.1020
-        self.env.df.at[self.env.current_step, 'Low'] = 1.1010
-        self.env.step(0)
-        
-        # Trade should be closed
+        # Trade should be closed due to timeout
         self.assertEqual(self.env.position, 0)
-        # Reward should be 0.5 for securing profit
-        self.assertEqual(self.env.trade_history[-1][1], 0.5)
-        # Exit reason is -1 because it was stopped out (even in profit)
-        self.assertEqual(self.env.trade_history[-1][2], -1)
-
-    def test_short_trailing_stop_activation(self):
-        self.env.step(2) # Enter short
-        # Entry = 1.09995
-        # TP = entry - 0.0080 = 1.09195
-        # 50% TP = entry - 0.0040 = 1.09595
-        # 25% TP SL = entry - 0.0020 = 1.09795
         
-        # Step 1: Hit 50% TP downwards
-        self.env.df.at[self.env.current_step, 'Low'] = 1.0950
-        self.env.df.at[self.env.current_step, 'High'] = 1.0970
-        self.env.step(0)
-        
-        # SL should now be exactly 1.09795
-        self.assertAlmostEqual(self.env.current_sl_price, 1.09795, places=5)
-        
-        # Step 2: Hit new secured SL
-        self.env.df.at[self.env.current_step, 'High'] = 1.0990
-        self.env.df.at[self.env.current_step, 'Low'] = 1.0970
-        self.env.step(0)
-        
-        # Trade should be closed
-        self.assertEqual(self.env.position, 0)
-        self.assertEqual(self.env.trade_history[-1][1], 0.5)
-        self.assertEqual(self.env.trade_history[-1][2], -1)
+        # Reward should be -0.5 for timeout
+        self.assertEqual(self.env.trade_history[-1][1], -0.5)
+        # Exit reason should be 0
+        self.assertEqual(self.env.trade_history[-1][2], 0)
 
 if __name__ == '__main__':
     unittest.main()
