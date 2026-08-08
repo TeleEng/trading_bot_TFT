@@ -4,8 +4,9 @@ import numpy as np
 
 class TradingRLEnv(gym.Env):
     def __init__(self, embeddings, df, long_tp_mult=2.5, long_sl_mult=1.0, short_tp_mult=4.0, short_sl_mult=1.0, initial_capital=10000,
-                 spread_pips=1.0, slippage_pips=0.3, swap_pips_per_day=0.5):
+                 spread_pips=1.0, slippage_pips=0.3, swap_pips_per_day=0.5, is_eval=False):
         super(TradingRLEnv, self).__init__()
+        self.is_eval = is_eval
         self.embeddings = embeddings
         self.df = df
         
@@ -43,7 +44,13 @@ class TradingRLEnv(gym.Env):
         
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        self.current_step = 0
+        
+        # Randomize starting point during training so the agent sees the whole time series even if it crashes early
+        if not self.is_eval and len(self.df) > 1000:
+            self.current_step = self.np_random.integers(0, len(self.df) - 1000)
+        else:
+            self.current_step = 0
+            
         self.portfolio_value = self.initial_capital
         self.capital = self.initial_capital
         self.position = 0.0  # qty (positive = long, negative = short)
@@ -182,6 +189,7 @@ class TradingRLEnv(gym.Env):
         trade_closed = False
         trade_reward = 0.0
         current_direction = 1.0 if self.position > 0 else (-1.0 if self.position < 0 else 0.0)
+        target_direction = 0.0
         
         # --- Deduct overnight swap cost for open positions ---
         if self.position != 0:
@@ -217,7 +225,6 @@ class TradingRLEnv(gym.Env):
         # Once in a trade, it MUST hold until TP or SL is hit.
         if self.position == 0:
             self.bars_flat += 1
-            target_direction = 0.0
             if action == 1: target_direction = 1.0
             elif action == 2: target_direction = -1.0
             
@@ -251,10 +258,15 @@ class TradingRLEnv(gym.Env):
         
         dsr_step_reward = (self.dsr_B * delta_A - 0.5 * self.dsr_A * delta_B) / (safe_variance ** 1.5)
         
-        # Clip DSR reward to prevent extreme spikes during very low variance periods
+        # Clip DSR for stability
         dsr_step_reward = max(-5.0, min(dsr_step_reward, 5.0))
         
-        reward = dsr_step_reward + (trade_reward * 5.0)
+        # Apply a transaction penalty to lower the number of trades (encourages high-confidence entries only)
+        action_penalty = 0.0
+        if self.position == 0 and target_direction != 0:
+            action_penalty = -0.1
+            
+        reward = dsr_step_reward + (trade_reward * 5.0) + action_penalty
             
         if self.bars_flat > 48:
             reward -= 0.01

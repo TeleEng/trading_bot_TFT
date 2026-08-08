@@ -78,8 +78,11 @@ def main():
         df_1w = pd.read_csv(file_1w, index_col=0, parse_dates=True)
     
 
-    val_idx = int(len(df_1h) * 0.6)
-    test_idx = int(len(df_1h) * 0.8)
+    print("\n[Phase 2] Loading MTF Data & Splitting (Train / 1-Year Val / 1-Year Test)...")
+    
+    one_year_bars = 252 * 24
+    test_idx = len(df_1h) - one_year_bars
+    val_idx = test_idx - one_year_bars
     
     train_1h = df_1h.iloc[:val_idx]
     val_1h = df_1h.iloc[val_idx - model.input_chunk_length : test_idx]
@@ -123,7 +126,7 @@ def main():
     
     # The models must use the same aligned index logic, so we can use either one's get_aligned_df
     train_env = TradingRLEnv(train_embeddings, model_long.get_aligned_df(train_1h, df_4h, df_1d, df_1w))
-    val_env = TradingRLEnv(val_embeddings, model_long.get_aligned_df(val_1h, df_4h, df_1d, df_1w))
+    val_env = TradingRLEnv(val_embeddings, model_long.get_aligned_df(val_1h, df_4h, df_1d, df_1w), is_eval=True)
     
     train_env = Monitor(train_env)
     val_env = Monitor(val_env)
@@ -152,7 +155,7 @@ def main():
     test_emb_short = model_short.predict_batch_embeddings((test_1h, df_4h, df_1d, df_1w))
     test_embeddings = np.concatenate([test_emb_long, test_emb_short], axis=1)
     
-    test_env = TradingRLEnv(test_embeddings, model_long.get_aligned_df(test_1h, df_4h, df_1d, df_1w))
+    test_env = TradingRLEnv(test_embeddings, model_long.get_aligned_df(test_1h, df_4h, df_1d, df_1w), is_eval=True)
     
     obs, _ = test_env.reset()
     done = False
