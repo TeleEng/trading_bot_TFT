@@ -155,35 +155,50 @@ This creates sample OHLCV data useful for testing without downloading real marke
 
 ```
 ============================================================
-TRADING BOT - FULL PIPELINE
+TRADING BOT - FULL PIPELINE (DUAL-BRAIN + PPO)
 ============================================================
 
 [Phase 1] Preprocessing data and engineering features...
 (Optional - data already processed)
 
-[Phase 2] Splitting Data & Training ML model...
-Training Multi-Class TFT (Features: 38, Target Classes: 3)...
-  Epoch 001/150 | Train Loss: 1.0823 | Val Loss: 1.0547 | Val Acc: 0.3847 | LR: 0.0010
-  Epoch 006/150 | Train Loss: 0.9234 | Val Loss: 0.9012 | Val Acc: 0.4521 | LR: 0.0010
+[Phase 2] Training Dual-Brain TemporalFusionTransformers...
+--- Training LONG Brain ---
+Training Binary TFT (Features: 38, Target: Long)...
+  Epoch 001/150 | Train Loss: 0.6931 | Val Loss: 0.6901 | Val F1: 0.5123 | LR: 0.0010
   ...
-Early stopping triggered at epoch 87. Restoring best weights.
-Model trained on 80% split of EURUSD_master.csv
-Internal Validation Score: 0.4823
+Early stopping triggered. Restoring best weights. (tft_long.pth)
 
-Confusion Matrix saved to trading_bot/results/confusion_matrix.png
+--- Training SHORT Brain ---
+Training Binary TFT (Features: 38, Target: Short)...
+  Epoch 001/150 | Train Loss: 0.6931 | Val Loss: 0.6895 | Val F1: 0.5211 | LR: 0.0010
+  ...
+Early stopping triggered. Restoring best weights. (tft_short.pth)
 
-[Phase 3] Running out-of-sample backtest...
-Starting Multi-Class Dynamic ATR Backtest on trading_bot/data/processed/test_split.csv...
+[Phase 3] PPO Reinforcement Learning Training...
+Starting PPO Agent Training (500k timesteps)...
+---------------------------------
+| rollout/           |          |
+|    ep_len_mean     | 1.05e+03 |
+|    ep_rew_mean     | 45.2     |
+| time/              |          |
+|    fps             | 450      |
+|    iterations      | 1        |
+|    time_elapsed    | 4        |
+|    total_timesteps | 2048     |
+---------------------------------
+
+[Phase 4] Running out-of-sample backtest...
+Starting PPO Agent Backtest on trading_bot/data/processed/test_split.csv...
 
 ==================================================
-BACKTEST PERFORMANCE REPORT
+BACKTEST PERFORMANCE REPORT (SOTA DSR)
 ==================================================
-Total Return (%): 3.47%
-Sharpe Ratio: 0.92
-Max Drawdown (%): -8.23%
-Win Rate (%): 52.34%
-Final Value: 10347.00
-Total Trades: 47.00
+Total Return (%): 12.45%
+Sharpe Ratio: 2.15
+Max Drawdown (%): -4.12%
+Win Rate (%): 38.5% (Asymmetrical R:R)
+Final Value: 11245.00
+Total Trades: 142.00
 ==================================================
 
 Generating performance visualization...
