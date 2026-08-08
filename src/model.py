@@ -12,6 +12,7 @@ from pathlib import Path
 from augment import TimeSeriesAugmenter
 from loss import SupervisedContrastiveClusteringLoss
 from pytorch_enn import PyTorchENN
+import gc
 
 
 class GLU(nn.Module):
@@ -240,7 +241,7 @@ class PricePredictor:
                 if target is not None:
                     y.append(target[i])
                     
-        X_1h, X_4h, X_1d, X_1w = np.array(X_1h), np.array(X_4h), np.array(X_1d), np.array(X_1w)
+        X_1h, X_4h, X_1d, X_1w = np.array(X_1h, dtype=np.float32), np.array(X_4h, dtype=np.float32), np.array(X_1d, dtype=np.float32), np.array(X_1w, dtype=np.float32)
         
         if target is not None:
             y = np.array(y)
@@ -265,6 +266,10 @@ class PricePredictor:
                 # Concatenate 1H and 4H scaled timeframes to prevent dimensionality explosion
                 X_enn = np.concatenate([X1_flat, X4_flat], axis=1)
                 X_enn = np.nan_to_num(X_enn, nan=0.0)
+                
+                # Free memory
+                del X1_flat, X4_flat, X1d_flat, X1w_flat
+                gc.collect()
                 
                 enn = PyTorchENN(n_neighbors=5, kind_sel='mode', batch_size=256, device='cuda')
                 keep_idx = enn.fit_resample(X_enn, y)
