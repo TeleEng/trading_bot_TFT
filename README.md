@@ -17,31 +17,23 @@ A professional FX trading bot powered by **HistData.com 1-minute data**, **Tempo
   - Max hold period: 6 hours before label expires
 - **3-Class Output**: Flat (0), Up (1), Down (2) for robust market regime detection
 
-### 🤖 Neural Architecture
-- **TemporalFusionTransformer**: Custom PyTorch model combining:
-  - **LSTM Encoder**: Captures temporal dependencies in sequences
-  - **MultiheadAttention**: Identifies key time steps and cross-feature interactions
-  - **3-Class Classifier**: Outputs probability distribution over market regimes
+### 🤖 Neural Architecture (Dual-Brain TFT + PPO)
+- **Deep Reinforcement Learning (PPO)**: The core trading agent uses Proximal Policy Optimization (PPO) from Stable-Baselines3 to make discrete actions (Flat, Long, Short).
+- **Dual-Brain TemporalFusionTransformer**: Two independently trained TFTs (`tft_long.pth` and `tft_short.pth`) act as feature extractors.
+  - The models process 30-timestep sequences of engineered features.
+  - Their outputs are concatenated into a **256-dimensional state embedding** that provides the PPO agent with a unified view of bullish and bearish momentum.
 - **Self-Supervised MTF & PyTorch ENN**:
   - Uses Multi-Timeframe (MTF) Supervised Contrastive Learning.
   - Custom **PyTorch ENN** (Edited Nearest Neighbors) to aggressively clean contradictory labels and eliminate noise from the dataset.
-  - Implements **Macro F1 Early Stopping** to maintain balance and prevent overfitting regardless of class imbalance.
-- **Input**: 30-timestep sequences of engineered features
-- **Output**: Probabilities [P_Flat, P_Up, P_Down] for decision-making
+  - Implements **Macro F1 Early Stopping** to maintain balance and prevent overfitting.
 
-### 📈 Risk Management
-- **Dynamic ATR-Based Stops**: Adjusts to volatility at each decision point
-- **Break-Even Plus**: Locks in profit once strategy is 70% to target
-- **Cooldown Periods**: Prevents over-trading after risk events
-- **Position Tracking**: Volume Weighted Average Price (VWAP) for multi-leg entries
-
-### 📊 Backtesting Engine
-- **Out-of-Sample Validation**: Strictly separate train/test splits
-- **Multi-Class Risk Logic**: Dynamic stops & targets based on model confidence
-- **Performance Metrics**:
-  - Total Return & Sharpe Ratio (hourly annualization: 252×24 hours)
-  - Max Drawdown & Win Rate
-  - Round-trip trade analysis with PnL tracking
+### 📈 Risk Management & Reward Function
+- **SOTA Differential Sharpe Ratio (DSR)**: The agent is trained using a continuous, dense reward function based on the Differential Sharpe Ratio. This mathematically penalizes high-variance equity curves and drawdowns step-by-step.
+- **Asymmetrical R:R Trading Rules**: 
+  - Long trades strictly enforce a `1:2.5` Risk-Reward ratio.
+  - Short trades strictly enforce a `1:4` Risk-Reward ratio.
+  - Trades must hit either the full Take Profit or full Stop Loss (no specification loopholes or trailing stops).
+- **Timeout Momentum Penalty**: Trades are given a 96-hour window to resolve. If they fail to hit targets, they are closed with a fixed negative reward to enforce momentum trading.
 
 ## Project Structure
 
