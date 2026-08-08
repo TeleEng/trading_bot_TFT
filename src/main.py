@@ -138,7 +138,7 @@ def main():
     )
     
     ppo_model = PPO("MlpPolicy", train_env, verbose=0, device="cpu")
-    ppo_model.learn(total_timesteps=2000000, callback=eval_callback)
+    ppo_model.learn(total_timesteps=500000, callback=eval_callback)
     
     try:
         ppo_model = PPO.load(str(models_dir / "best_model.zip"))
