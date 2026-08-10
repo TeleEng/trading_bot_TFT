@@ -100,7 +100,7 @@ class TestTradingRLEnv(unittest.TestCase):
         self.env.step(0)
         
         self.assertEqual(self.env.position, 0)
-        self.assertEqual(self.env.trade_history[-1][1], 1.0)
+        self.assertEqual(self.env.trade_history[-1][1], 2.5)
         
     def test_timeout_penalty(self):
         self.env.step(1) # Enter long
@@ -114,8 +114,8 @@ class TestTradingRLEnv(unittest.TestCase):
         # Trade should be closed due to timeout
         self.assertEqual(self.env.position, 0)
         
-        # Reward should be -0.5 for timeout
-        self.assertEqual(self.env.trade_history[-1][1], -0.5)
+        # Reward should be -1.0 for timeout (tied to SL)
+        self.assertEqual(self.env.trade_history[-1][1], -1.0)
         # Exit reason should be 0
         self.assertEqual(self.env.trade_history[-1][2], 0)
 
