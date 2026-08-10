@@ -256,6 +256,12 @@ class TradingRLEnv(gym.Env):
         self.last_portfolio_value = self.portfolio_value
         self.current_step += 1
         
-        terminated = self.portfolio_value <= 0 or self.current_step >= len(self.df) - 1
+        # Check for bankruptcy (portfolio drops below 10% of initial capital)
+        is_bankrupt = self.portfolio_value < (self.initial_capital * 0.1)
+        
+        if is_bankrupt:
+            reward -= 100.0  # Massive terminal penalty for "RL Suicide" prevention
+            
+        terminated = is_bankrupt or self.current_step >= len(self.df) - 1
         
         return self._get_obs(), float(reward), terminated, False, {}
