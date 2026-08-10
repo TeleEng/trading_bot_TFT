@@ -241,16 +241,17 @@ class TradingRLEnv(gym.Env):
 
         # Update portfolio value (mark-to-market at mid-price)
         self.portfolio_value = self.capital + (self.position * (price - self.entry_price) if self.position != 0 else 0)
-        # Apply a transaction penalty to lower the number of trades (encourages high-confidence entries only)
+        # Apply a transaction penalty representing max costs (3.6 pips) relative to high-volatility ATR (72 pips)
         action_penalty = 0.0
         if self.position == 0 and target_direction != 0:
-            action_penalty = -0.1
+            action_penalty = -0.05
             
         # Agent's only goal is to maximize pure R:R and avoid the flat/action penalties
         reward = trade_reward + action_penalty
             
-        if self.bars_flat > 48:
-            reward -= 0.01
+        # Apply flat penalty of 1/12th the action penalty per hour to discourage permanent hoarding
+        if self.position == 0:
+            reward -= 0.0042
             
         self.last_portfolio_value = self.portfolio_value
         self.current_step += 1
