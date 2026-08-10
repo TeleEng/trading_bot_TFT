@@ -119,19 +119,19 @@ class TradingRLEnv(gym.Env):
             # SL checked first (conservative: assume adverse move happens first)
             if low <= self.current_sl_price:
                 exit_price = self._get_fill_price(self.current_sl_price, -1)  # selling to close
-                return True, -1.0, exit_price, -1
+                return True, -self.long_sl_mult, exit_price, -1
             elif high >= self.tp_price:
                 exit_price = self._get_fill_price(self.tp_price, -1)
-                return True, 1.0, exit_price, 1
+                return True, self.long_tp_mult, exit_price, 1
                 
         else:  # Short
             # SL checked first (conservative)
             if high >= self.current_sl_price:
                 exit_price = self._get_fill_price(self.current_sl_price, 1)  # buying to close
-                return True, -1.0, exit_price, -1
+                return True, -self.short_sl_mult, exit_price, -1
             elif low <= self.tp_price:
                 exit_price = self._get_fill_price(self.tp_price, 1)
-                return True, 1.0, exit_price, 1
+                return True, self.short_tp_mult, exit_price, 1
                 
         return False, 0.0, 0.0, 0
         
@@ -206,8 +206,8 @@ class TradingRLEnv(gym.Env):
                 trade_closed = True
                 exit_price = price
                 exit_reason = 0 # Timeout
-                # Fixed negative penalty for failing to capture momentum within the window
-                trade_reward = -0.5
+                # Make timeout identical to SL so agent doesn't farm it to escape flat penalties
+                trade_reward = -self.long_sl_mult if self.position > 0 else -self.short_sl_mult
                     
             if trade_closed:
                 self._close_position(exit_price)
@@ -241,32 +241,13 @@ class TradingRLEnv(gym.Env):
 
         # Update portfolio value (mark-to-market at mid-price)
         self.portfolio_value = self.capital + (self.position * (price - self.entry_price) if self.position != 0 else 0)
-        
-        # Calculate Differential Sharpe Ratio (DSR) as the step reward
-        step_return = (self.portfolio_value - self.last_portfolio_value) / self.last_portfolio_value
-        
-        # Update Exponential Moving Moments for DSR
-        delta_A = step_return - self.dsr_A
-        delta_B = (step_return ** 2) - self.dsr_B
-        
-        self.dsr_A += self.dsr_eta * delta_A
-        self.dsr_B += self.dsr_eta * delta_B
-        
-        # Calculate DSR (with safe denominator to prevent division by zero)
-        variance = self.dsr_B - (self.dsr_A ** 2)
-        safe_variance = max(variance, 1e-8)
-        
-        dsr_step_reward = (self.dsr_B * delta_A - 0.5 * self.dsr_A * delta_B) / (safe_variance ** 1.5)
-        
-        # Clip DSR for stability
-        dsr_step_reward = max(-5.0, min(dsr_step_reward, 5.0))
-        
         # Apply a transaction penalty to lower the number of trades (encourages high-confidence entries only)
         action_penalty = 0.0
         if self.position == 0 and target_direction != 0:
             action_penalty = -0.1
             
-        reward = dsr_step_reward + (trade_reward * 5.0) + action_penalty
+        # Agent's only goal is to maximize pure R:R and avoid the flat/action penalties
+        reward = trade_reward + action_penalty
             
         if self.bars_flat > 48:
             reward -= 0.01
