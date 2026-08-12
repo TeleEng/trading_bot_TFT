@@ -321,7 +321,9 @@ class PricePredictor:
         
         # Identify Categorical Indices
         cat_cols = ['Hour', 'DayOfWeek']
-        cat_indices = [df_1h_t.columns.drop(['target'], errors='ignore').get_loc(c) for c in cat_cols if c in df_1h_t.columns]
+        drop_cols = ['target_long', 'target_short', 'target', 'Open', 'High', 'Low', 'Close', 'Volume']
+        clean_cols = df_1h_t.drop(columns=drop_cols, errors='ignore').columns
+        cat_indices = [clean_cols.get_loc(c) for c in cat_cols if c in clean_cols]
 
         self.model = MultiTimeframeTFT(
             input_size=input_size, 
