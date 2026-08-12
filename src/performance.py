@@ -42,28 +42,28 @@ class PerformanceMetrics:
 
         # FIX: Win Rate & Trade Count - Now strictly calculates complete round-trip trades
         trades = []
-        entry_price = 0.0
         entry_pos = 0.0
+        entry_portfolio = 0.0
         
         for _, row in backtest_results.iterrows():
             pos = row.get('position', 0)
-            price = row.get('price', 0)
+            portfolio = row.get('portfolio_value', 0)
             
             if pos != 0 and entry_pos == 0:
                 # Open position
                 entry_pos = pos
-                entry_price = price
+                entry_portfolio = portfolio
             elif pos == 0 and entry_pos != 0:
                 # Close position
-                pnl = (price - entry_price) / entry_price if entry_pos > 0 else (entry_price - price) / entry_price
+                pnl = portfolio - entry_portfolio
                 trades.append(pnl)
                 entry_pos = 0.0
             elif pos != 0 and entry_pos != 0 and np.sign(pos) != np.sign(entry_pos):
                 # Flipped position (e.g., long to short)
-                pnl = (price - entry_price) / entry_price if entry_pos > 0 else (entry_price - price) / entry_price
+                pnl = portfolio - entry_portfolio
                 trades.append(pnl)
                 entry_pos = pos
-                entry_price = price
+                entry_portfolio = portfolio
 
         winning_trades = sum(1 for t in trades if t > 0)
         total_trades = len(trades)
