@@ -119,5 +119,87 @@ class TestTradingRLEnv(unittest.TestCase):
         # Exit reason should be 0
         self.assertEqual(self.env.trade_history[-1][2], 0)
 
+    def test_exact_pnl_with_spread(self):
+        # Initial capital = 10000.0
+        self.env.step(1)
+        # Entry price = 1.1000 + 0.00005 = 1.10005
+        # Risk amount = 200.0
+        # Risk per unit = 0.0020
+        # Qty = 100000.0
+        
+        # TP price = 1.10005 + (2.5 * 0.0020) = 1.10505
+        # Hit TP!
+        self.env.df.at[self.env.current_step, 'Low'] = 1.1000
+        self.env.df.at[self.env.current_step, 'High'] = 1.1060
+        self.env.step(0)
+        
+        # Exit fill price = TP price - 0.00005 = 1.10500
+        # Expected PnL = 100000.0 * (1.10500 - 1.10005) = 495.0
+        # Swap cost for 1 bar holding = (0.5 * 0.0001) / 24 * 100000 = 0.208333
+        # Total profit = 495.0 - 0.208333 = 494.791667
+        
+        self.assertAlmostEqual(self.env.capital, 10494.79, places=2)
+        self.assertAlmostEqual(self.env.portfolio_value, 10494.79, places=2)
+
+    def test_short_sl_hit(self):
+        # Trigger entry short
+        self.env.step(2) 
+        # Entry price = 1.09995 (Spread = 1.0 pip)
+        # SL = entry + 0.0020 = 1.10195
+        
+        # Modify next row to hit SL
+        self.env.df.at[self.env.current_step, 'High'] = 1.1030
+        
+        self.env.step(0)
+        
+        self.assertEqual(self.env.position, 0)
+        self.assertAlmostEqual(self.env.trade_history[-1][1], -0.200, places=3)
+        
+    def test_short_tp_hit(self):
+        self.env.step(2)
+        # Entry = 1.09995
+        # TP = entry - (4.0 * 0.0020) = 1.09195
+        
+        # Hit TP but not SL
+        self.env.df.at[self.env.current_step, 'High'] = 1.1010
+        self.env.df.at[self.env.current_step, 'Low'] = 1.0900
+        
+        self.env.step(0)
+        
+        self.assertEqual(self.env.position, 0)
+        self.assertAlmostEqual(self.env.trade_history[-1][1], 4.800, places=3)
+        
+    def test_intrabar_collision_long(self):
+        self.env.step(1)
+        # Entry = 1.10005
+        # TP = 1.10505, SL = 1.09805
+        
+        # Huge candle hitting BOTH TP and SL in the same bar
+        self.env.df.at[self.env.current_step, 'High'] = 1.1060
+        self.env.df.at[self.env.current_step, 'Low'] = 1.0970
+        
+        self.env.step(0)
+        
+        # Should conservatively hit SL first!
+        self.assertEqual(self.env.position, 0)
+        self.assertAlmostEqual(self.env.trade_history[-1][1], -0.286, places=3)
+        self.assertEqual(self.env.trade_history[-1][2], -1)
+
+    def test_intrabar_collision_short(self):
+        self.env.step(2)
+        # Entry = 1.09995
+        # TP = 1.09195, SL = 1.10195
+        
+        # Huge candle hitting BOTH
+        self.env.df.at[self.env.current_step, 'High'] = 1.1030
+        self.env.df.at[self.env.current_step, 'Low'] = 1.0900
+        
+        self.env.step(0)
+        
+        # Should conservatively hit SL first!
+        self.assertEqual(self.env.position, 0)
+        self.assertAlmostEqual(self.env.trade_history[-1][1], -0.200, places=3)
+        self.assertEqual(self.env.trade_history[-1][2], -1)
+
 if __name__ == '__main__':
     unittest.main()
