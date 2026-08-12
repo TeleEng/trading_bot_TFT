@@ -120,19 +120,66 @@ class TestTradingRLEnv(unittest.TestCase):
         self.assertEqual(self.env.trade_history[-1][2], 0)
 
     def test_rl_reward_upfront_penalty(self):
-        # Initial step
+        # Scenario 1: Flat penalty
         obs, reward, done, trunc, info = self.env.step(0)
-        # Should be flat penalty
         self.assertAlmostEqual(reward, -0.0042, places=4)
         
-        # Open Long
+        # Scenario 2: Open Long penalty
         obs, reward, done, trunc, info = self.env.step(1)
-        # Reward should EXACTLY equal the Long action penalty (-0.779)
         self.assertAlmostEqual(reward, -0.779, places=3)
         
-        # Step while in trade (No penalty, no reward until closed)
+        # Scenario 3: Step while in trade (No penalty)
         obs, reward, done, trunc, info = self.env.step(0)
         self.assertEqual(reward, 0.0)
+
+    def test_rl_reward_sum_long_sl(self):
+        self.env.step(1) # Entry reward: -0.779
+        self.env.df.at[self.env.current_step, 'Low'] = 1.0900 # Force SL hit
+        obs, reward, done, trunc, info = self.env.step(0) # Exit reward: -0.286
+        
+        # Total RL experience for hitting a Long SL should exactly be:
+        # -1.0 (SL Risk) + -0.065 (Trading Costs) = -1.065
+        total_rl_reward = -0.779 + reward
+        self.assertAlmostEqual(total_rl_reward, -1.065, places=3)
+
+    def test_rl_reward_sum_long_tp(self):
+        self.env.step(1) # Entry reward: -0.779
+        # Force TP hit
+        self.env.df.at[self.env.current_step, 'Low'] = 1.1000
+        self.env.df.at[self.env.current_step, 'High'] = 1.1060
+        obs, reward, done, trunc, info = self.env.step(0) # Exit reward: 3.214
+        
+        # Total RL experience for hitting a Long TP should exactly be:
+        # +2.5 (TP Reward) - 0.065 (Trading Costs) = +2.435
+        total_rl_reward = -0.779 + reward
+        self.assertAlmostEqual(total_rl_reward, 2.435, places=3)
+        
+    def test_rl_reward_sum_short_sl(self):
+        # Open Short
+        obs, reward_entry, done, trunc, info = self.env.step(2)
+        self.assertAlmostEqual(reward_entry, -0.865, places=3)
+        
+        # Force SL hit
+        self.env.df.at[self.env.current_step, 'High'] = 1.1100
+        obs, reward_exit, done, trunc, info = self.env.step(0)
+        self.assertAlmostEqual(reward_exit, -0.200, places=3)
+        
+        # Total RL experience for hitting a Short SL should exactly be:
+        # -1.0 (SL Risk) + -0.065 (Trading Costs) = -1.065
+        total_rl_reward = reward_entry + reward_exit
+        self.assertAlmostEqual(total_rl_reward, -1.065, places=3)
+
+    def test_rl_reward_sum_short_tp(self):
+        obs, reward_entry, done, trunc, info = self.env.step(2) # Entry reward: -0.865
+        # Force TP hit (Short 1:4 RR)
+        self.env.df.at[self.env.current_step, 'High'] = 1.1010
+        self.env.df.at[self.env.current_step, 'Low'] = 1.0900
+        obs, reward_exit, done, trunc, info = self.env.step(0) # Exit reward: 4.800
+        
+        # Total RL experience for hitting a Short TP should exactly be:
+        # +4.0 (TP Reward) - 0.065 (Trading Costs) = +3.935
+        total_rl_reward = reward_entry + reward_exit
+        self.assertAlmostEqual(total_rl_reward, 3.935, places=3)
 
     def test_exact_pnl_with_spread(self):
         # Initial capital = 10000.0
