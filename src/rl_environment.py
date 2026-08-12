@@ -243,7 +243,7 @@ class TradingRLEnv(gym.Env):
         self.portfolio_value = self.capital + (self.position * (price - self.entry_price) if self.position != 0 else 0)
         # Apply upfront penalty including expected loss (Credit Assignment)
         action_penalty = 0.0
-        if self.position == 0 and target_direction != 0:
+        if target_direction != 0:
             if target_direction > 0:
                 action_penalty = -0.779  # -0.065 (cost) + -0.714 (expected SL hit)
             else:

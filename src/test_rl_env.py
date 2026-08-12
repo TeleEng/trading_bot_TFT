@@ -119,6 +119,21 @@ class TestTradingRLEnv(unittest.TestCase):
         # Exit reason should be 0
         self.assertEqual(self.env.trade_history[-1][2], 0)
 
+    def test_rl_reward_upfront_penalty(self):
+        # Initial step
+        obs, reward, done, trunc, info = self.env.step(0)
+        # Should be flat penalty
+        self.assertAlmostEqual(reward, -0.0042, places=4)
+        
+        # Open Long
+        obs, reward, done, trunc, info = self.env.step(1)
+        # Reward should EXACTLY equal the Long action penalty (-0.779)
+        self.assertAlmostEqual(reward, -0.779, places=3)
+        
+        # Step while in trade (No penalty, no reward until closed)
+        obs, reward, done, trunc, info = self.env.step(0)
+        self.assertEqual(reward, 0.0)
+
     def test_exact_pnl_with_spread(self):
         # Initial capital = 10000.0
         self.env.step(1)
