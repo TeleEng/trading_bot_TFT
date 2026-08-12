@@ -221,9 +221,9 @@ class TradingRLEnv(gym.Env):
             current_direction = 0.0
             
         # --- Handle agent action ---
-        # The agent can ONLY act if there is NO open position.
+        # The agent can ONLY act if there is NO open position AND it didn't just close one this exact bar.
         # Once in a trade, it MUST hold until TP or SL is hit.
-        if self.position == 0:
+        if self.position == 0 and not trade_closed:
             self.bars_flat += 1
             if action == 1: target_direction = 1.0
             elif action == 2: target_direction = -1.0
@@ -253,7 +253,7 @@ class TradingRLEnv(gym.Env):
         reward = trade_reward + action_penalty
             
         # Apply flat penalty of 1/12th the original action penalty per hour
-        if self.position == 0:
+        if self.position == 0 and not trade_closed:
             reward -= 0.0042
             
         self.last_portfolio_value = self.portfolio_value
