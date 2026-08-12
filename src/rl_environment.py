@@ -119,7 +119,7 @@ class TradingRLEnv(gym.Env):
             # SL checked first (conservative: assume adverse move happens first)
             if low <= self.current_sl_price:
                 exit_price = self._get_fill_price(self.current_sl_price, -1)  # selling to close
-                return True, -self.long_sl_mult, exit_price, -1
+                return True, 0.0, exit_price, -1
             elif high >= self.tp_price:
                 exit_price = self._get_fill_price(self.tp_price, -1)
                 return True, self.long_tp_mult, exit_price, 1
@@ -128,7 +128,7 @@ class TradingRLEnv(gym.Env):
             # SL checked first (conservative)
             if high >= self.current_sl_price:
                 exit_price = self._get_fill_price(self.current_sl_price, 1)  # buying to close
-                return True, -self.short_sl_mult, exit_price, -1
+                return True, 0.0, exit_price, -1
             elif low <= self.tp_price:
                 exit_price = self._get_fill_price(self.tp_price, 1)
                 return True, self.short_tp_mult, exit_price, 1
@@ -206,8 +206,8 @@ class TradingRLEnv(gym.Env):
                 trade_closed = True
                 exit_price = price
                 exit_reason = 0 # Timeout
-                # Make timeout identical to SL so agent doesn't farm it to escape flat penalties
-                trade_reward = -self.long_sl_mult if self.position > 0 else -self.short_sl_mult
+                # Make timeout identical to SL (0.0 reward, since penalty was paid upfront)
+                trade_reward = 0.0
                     
             if trade_closed:
                 self._close_position(exit_price)
@@ -241,10 +241,13 @@ class TradingRLEnv(gym.Env):
 
         # Update portfolio value (mark-to-market at mid-price)
         self.portfolio_value = self.capital + (self.position * (price - self.entry_price) if self.position != 0 else 0)
-        # Apply a transaction penalty (increased by 30% from -0.05 to reduce trading frequency)
+        # Apply upfront penalty including expected loss (Credit Assignment)
         action_penalty = 0.0
         if self.position == 0 and target_direction != 0:
-            action_penalty = -0.065
+            if target_direction > 0:
+                action_penalty = -0.779  # -0.065 (cost) + -0.714 (expected SL hit)
+            else:
+                action_penalty = -0.865  # -0.065 (cost) + -0.800 (expected SL hit)
             
         # Agent's only goal is to maximize pure R:R and avoid the flat/action penalties
         reward = trade_reward + action_penalty

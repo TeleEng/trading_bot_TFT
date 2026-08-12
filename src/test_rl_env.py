@@ -83,8 +83,8 @@ class TestTradingRLEnv(unittest.TestCase):
         
         # Should close the trade
         self.assertEqual(self.env.position, 0)
-        # trade history should show -1.0
-        self.assertEqual(self.env.trade_history[-1][1], -1.0)
+        # trade history should show 0.0 (penalty paid upfront)
+        self.assertEqual(self.env.trade_history[-1][1], 0.0)
 
     def test_fixed_tp_hit(self):
         # Trigger entry long
@@ -114,8 +114,8 @@ class TestTradingRLEnv(unittest.TestCase):
         # Trade should be closed due to timeout
         self.assertEqual(self.env.position, 0)
         
-        # Reward should be -1.0 for timeout (tied to SL)
-        self.assertEqual(self.env.trade_history[-1][1], -1.0)
+        # Reward should be 0.0 for timeout (penalty paid upfront)
+        self.assertEqual(self.env.trade_history[-1][1], 0.0)
         # Exit reason should be 0
         self.assertEqual(self.env.trade_history[-1][2], 0)
 
