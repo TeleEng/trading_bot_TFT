@@ -119,19 +119,19 @@ class TradingRLEnv(gym.Env):
             # SL checked first (conservative: assume adverse move happens first)
             if low <= self.current_sl_price:
                 exit_price = self._get_fill_price(self.current_sl_price, -1)  # selling to close
-                return True, 0.0, exit_price, -1
+                return True, -0.286, exit_price, -1  # Remainder of -1.0 (-1.0 - -0.714)
             elif high >= self.tp_price:
                 exit_price = self._get_fill_price(self.tp_price, -1)
-                return True, self.long_tp_mult, exit_price, 1
+                return True, 3.214, exit_price, 1  # 2.5 + 0.714 refunded
                 
         else:  # Short
             # SL checked first (conservative)
             if high >= self.current_sl_price:
                 exit_price = self._get_fill_price(self.current_sl_price, 1)  # buying to close
-                return True, 0.0, exit_price, -1
+                return True, -0.200, exit_price, -1  # Remainder of -1.0 (-1.0 - -0.800)
             elif low <= self.tp_price:
                 exit_price = self._get_fill_price(self.tp_price, 1)
-                return True, self.short_tp_mult, exit_price, 1
+                return True, 4.800, exit_price, 1  # 4.0 + 0.800 refunded
                 
         return False, 0.0, 0.0, 0
         
@@ -206,8 +206,8 @@ class TradingRLEnv(gym.Env):
                 trade_closed = True
                 exit_price = price
                 exit_reason = 0 # Timeout
-                # Make timeout identical to SL (0.0 reward, since penalty was paid upfront)
-                trade_reward = 0.0
+                # Make timeout identical to SL remainder
+                trade_reward = -0.286 if self.position > 0 else -0.200
                     
             if trade_closed:
                 self._close_position(exit_price)
