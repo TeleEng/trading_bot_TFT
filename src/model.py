@@ -130,6 +130,10 @@ class MultiTimeframeTFT(nn.Module):
         self.attention_1h = InterpretableMultiHeadAttention(embed_dim=hidden_size, num_heads=8, dropout=dropout)
         self.attn_layer_norm = nn.LayerNorm(hidden_size)
         
+        # Cross-Timeframe Attention
+        self.cross_attention = nn.MultiheadAttention(embed_dim=hidden_size, num_heads=4, dropout=dropout, batch_first=True)
+        self.cross_layer_norm = nn.LayerNorm(hidden_size)
+        
         # Fusion Layer
         self.fusion = GRN(hidden_size * 4, hidden_size, dropout=dropout)
         
@@ -191,7 +195,18 @@ class MultiTimeframeTFT(nn.Module):
         h_1d = out_1d[:, -1, :]
         h_1w = out_1w[:, -1, :]
         
-        h = self.fusion(torch.cat((h_1h, h_4h, h_1d, h_1w), dim=1))
+        # Stack into [batch, 4_timeframes, hidden_size]
+        stacked_h = torch.stack((h_1h, h_4h, h_1d, h_1w), dim=1)
+        
+        # Apply Cross-Timeframe Attention
+        # Queries, Keys, and Values are all the stacked timeframes
+        attn_out, _ = self.cross_attention(stacked_h, stacked_h, stacked_h)
+        stacked_h = self.cross_layer_norm(stacked_h + attn_out)
+        
+        # Flatten back to [batch, hidden_size * 4] for Fusion GRN
+        flattened_h = stacked_h.view(stacked_h.size(0), -1)
+        
+        h = self.fusion(flattened_h)
         
         z = self.instance_head(h)
         c_over = self.over_cluster_head(h)

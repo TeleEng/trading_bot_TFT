@@ -21,8 +21,9 @@ class TradingRLEnv(gym.Env):
         self.slippage = slippage_pips * 0.0001
         self.swap_per_bar = (swap_pips_per_day * 0.0001) / 24.0  # spread across 24 1H bars
         
-        # 0: Flat, 1: Long, 2: Short
-        self.action_space = spaces.Discrete(3)
+        # Continuous Action Space [-10.0, 10.0] for dynamic risk sizing
+        # -3.3 to 3.3 is Flat. Beyond that, scale risk based on abs(action) - 2.3
+        self.action_space = spaces.Box(low=-10.0, high=10.0, shape=(1,), dtype=np.float32)
         
         # Observation: emb_size + 1 (local_ratio) + 15 (last 5 trades: action, reward, exit_reason) + 1 (direction) + 1 (unrealized_return)
         emb_size = embeddings.shape[1] if len(embeddings) > 0 else 256
@@ -56,6 +57,7 @@ class TradingRLEnv(gym.Env):
         self.position = 0.0  # qty (positive = long, negative = short)
         self.entry_price = 0.0
         self.entry_atr = 0.0  # ATR at trade entry, used for fixed TP/SL
+        self.current_risk_multiplier = 0.0 # Tracks the multiplier used for the current open trade
         self.bars_held = 0    # track how long current position is held
         
         self.current_sl_price = 0.0
@@ -119,19 +121,19 @@ class TradingRLEnv(gym.Env):
             # SL checked first (conservative: assume adverse move happens first)
             if low <= self.current_sl_price:
                 exit_price = self._get_fill_price(self.current_sl_price, -1)  # selling to close
-                return True, -0.286, exit_price, -1  # Remainder of -1.0 (-1.0 - -0.714)
+                return True, -0.286 * self.current_risk_multiplier, exit_price, -1  # Remainder of -1.0 (-1.0 - -0.714)
             elif high >= self.tp_price:
                 exit_price = self._get_fill_price(self.tp_price, -1)
-                return True, 3.214, exit_price, 1  # 2.5 + 0.714 refunded
+                return True, 3.214 * self.current_risk_multiplier, exit_price, 1  # 2.5 + 0.714 refunded
                 
         else:  # Short
             # SL checked first (conservative)
             if high >= self.current_sl_price:
                 exit_price = self._get_fill_price(self.current_sl_price, 1)  # buying to close
-                return True, -0.200, exit_price, -1  # Remainder of -1.0 (-1.0 - -0.800)
+                return True, -0.200 * self.current_risk_multiplier, exit_price, -1  # Remainder of -1.0 (-1.0 - -0.800)
             elif low <= self.tp_price:
                 exit_price = self._get_fill_price(self.tp_price, 1)
-                return True, 4.800, exit_price, 1  # 4.0 + 0.800 refunded
+                return True, 4.800 * self.current_risk_multiplier, exit_price, 1  # 4.0 + 0.800 refunded
                 
         return False, 0.0, 0.0, 0
         
@@ -142,14 +144,16 @@ class TradingRLEnv(gym.Env):
         self.position = 0.0
         self.entry_price = 0.0
         self.entry_atr = 0.0
+        self.current_risk_multiplier = 0.0
         self.bars_held = 0
         return pnl
         
-    def _open_position(self, price, atr, direction):
-        """Open a new position with spread/slippage applied."""
+    def _open_position(self, price, atr, direction, risk_multiplier=1.0):
+        """Open a new position with spread/slippage applied and dynamic risk size."""
         fill_price = self._get_fill_price(price, direction)
         
-        risk_amount = self.portfolio_value * 0.02
+        # Base risk is 1%, scaled dynamically by the RL action's confidence
+        risk_amount = self.portfolio_value * 0.01 * risk_multiplier
         sl_mult = self.long_sl_mult if direction > 0 else self.short_sl_mult
         risk_per_unit = atr * sl_mult
         ideal_qty = (risk_amount / risk_per_unit) if risk_per_unit > 0 else 0.0
@@ -159,6 +163,7 @@ class TradingRLEnv(gym.Env):
         self.position = target_qty
         self.entry_price = fill_price
         self.entry_atr = atr  # Lock in ATR at entry for fixed TP/SL
+        self.current_risk_multiplier = risk_multiplier
         self.bars_held = 0
         
         # Initialize dynamic TP/SL levels
@@ -206,8 +211,8 @@ class TradingRLEnv(gym.Env):
                 trade_closed = True
                 exit_price = price
                 exit_reason = 0 # Timeout
-                # Make timeout identical to SL remainder
-                trade_reward = -0.286 if self.position > 0 else -0.200
+                # Make timeout identical to SL remainder, dynamically scaled!
+                trade_reward = (-0.286 if self.position > 0 else -0.200) * self.current_risk_multiplier
                     
             if trade_closed:
                 self._close_position(exit_price)
@@ -223,13 +228,21 @@ class TradingRLEnv(gym.Env):
         # --- Handle agent action ---
         # The agent can ONLY act if there is NO open position AND it didn't just close one this exact bar.
         # Once in a trade, it MUST hold until TP or SL is hit.
+        risk_multiplier = 0.0
         if self.position == 0 and not trade_closed:
             self.bars_flat += 1
-            if action == 1: target_direction = 1.0
-            elif action == 2: target_direction = -1.0
+            
+            # Parse Continuous Action
+            action_val = float(action[0]) if isinstance(action, (list, np.ndarray)) else float(action)
+            
+            if -3.3 <= action_val <= 3.3:
+                target_direction = 0.0
+            else:
+                target_direction = 1.0 if action_val > 0 else -1.0
+                risk_multiplier = abs(action_val) - 2.3
             
             if target_direction != 0:
-                self._open_position(price, atr, target_direction)
+                self._open_position(price, atr, target_direction, risk_multiplier)
                 
             # Dampen portfolio history towards current value so local_ratio decays back to 1.0
             # This prevents the agent from sitting flat forever just because it had a good streak.
@@ -242,12 +255,15 @@ class TradingRLEnv(gym.Env):
         # Update portfolio value (mark-to-market at mid-price)
         self.portfolio_value = self.capital + (self.position * (price - self.entry_price) if self.position != 0 else 0)
         # Apply upfront penalty including expected loss (Credit Assignment)
+        # Scaled dynamically to exactly match the risk multiplier of the trade!
         action_penalty = 0.0
         if target_direction != 0:
             if target_direction > 0:
-                action_penalty = -0.779  # -0.065 (cost) + -0.714 (expected SL hit)
+                base_penalty = -0.779  # -0.065 (cost) + -0.714 (expected SL hit)
             else:
-                action_penalty = -0.865  # -0.065 (cost) + -0.800 (expected SL hit)
+                base_penalty = -0.865  # -0.065 (cost) + -0.800 (expected SL hit)
+            
+            action_penalty = base_penalty * risk_multiplier
             
         # Agent's only goal is to maximize pure R:R and avoid the flat/action penalties
         reward = trade_reward + action_penalty
