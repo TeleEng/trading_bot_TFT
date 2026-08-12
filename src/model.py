@@ -10,7 +10,7 @@ import os
 from pathlib import Path
 
 from augment import TimeSeriesAugmenter
-from loss import SupervisedContrastiveClusteringLoss
+from loss import SupervisedContrastiveClusteringLoss, FocalLoss
 from pytorch_enn import PyTorchENN
 import gc
 
@@ -215,10 +215,11 @@ class PricePredictor:
         self.augmenter = TimeSeriesAugmenter(self.device)
 
     def create_sequences(self, df_1h, df_4h, df_1d, df_1w, clean_noise=False, target_col='target_long'):
-        features_1h = df_1h.drop(columns=['target_long', 'target_short', 'target'], errors='ignore').values
-        features_4h = df_4h.drop(columns=['target_long', 'target_short', 'target'], errors='ignore').values
-        features_1d = df_1d.drop(columns=['target_long', 'target_short', 'target'], errors='ignore').values
-        features_1w = df_1w.drop(columns=['target_long', 'target_short', 'target'], errors='ignore').values
+        drop_cols = ['target_long', 'target_short', 'target', 'Open', 'High', 'Low', 'Close', 'Volume']
+        features_1h = df_1h.drop(columns=drop_cols, errors='ignore').values
+        features_4h = df_4h.drop(columns=drop_cols, errors='ignore').values
+        features_1d = df_1d.drop(columns=drop_cols, errors='ignore').values
+        features_1w = df_1w.drop(columns=drop_cols, errors='ignore').values
         
         target = df_1h[target_col].values if target_col in df_1h.columns else None
         
@@ -351,7 +352,9 @@ class PricePredictor:
         class_weights = class_weights / class_weights.sum() * float(self.num_classes)  # normalize
 
         class_weights = class_weights.to(self.device)
-        ce_criterion = nn.CrossEntropyLoss(weight=class_weights)
+        # Use Focal Loss with alpha weighting for extreme imbalance
+        alpha = class_weights[1].item() / (class_weights[0].item() + class_weights[1].item()) if self.num_classes == 2 else 0.25
+        ce_criterion = FocalLoss(alpha=alpha, gamma=2.0, reduction='mean')
         
         print(f"Class weights: {class_weights.cpu().numpy()}")
         print("Starting MTF Supervised Contrastive + Classification Training...")

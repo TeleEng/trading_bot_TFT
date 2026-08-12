@@ -104,44 +104,64 @@ def add_triple_barrier_labels(df, atr_window=14,
 
 def add_all_features(df):
     """FULL feature engineering applied exclusively to the MAIN asset."""
-    df['SMA_20'] = df['Close'].rolling(window=20).mean()
-    df['SMA_50'] = df['Close'].rolling(window=50).mean()
+    # 1. Calculate ATR for normalization
+    high_low = df['High'] - df['Low']
+    high_close = np.abs(df['High'] - df['Close'].shift())
+    low_close = np.abs(df['Low'] - df['Close'].shift())
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    df['ATR'] = tr.rolling(14).mean().replace(0, 1e-10) # Avoid division by zero
+    df['SMA_ATR_50'] = df['ATR'].rolling(50).mean().replace(0, 1e-10)
+    df['ATR_Ratio'] = df['ATR'] / df['SMA_ATR_50']
 
-    df['EMA_12'] = df['Close'].ewm(span=12, adjust=False).mean()
-    df['EMA_26'] = df['Close'].ewm(span=26, adjust=False).mean()
+    # 2. Stationary distances for Moving Averages
+    sma_20 = df['Close'].rolling(window=20).mean()
+    sma_50 = df['Close'].rolling(window=50).mean()
+    df['Dist_SMA_20'] = (df['Close'] - sma_20) / df['ATR']
+    df['Dist_SMA_50'] = (df['Close'] - sma_50) / df['ATR']
 
+    ema_12 = df['Close'].ewm(span=12, adjust=False).mean()
+    ema_26 = df['Close'].ewm(span=26, adjust=False).mean()
+    df['Dist_EMA_12'] = (df['Close'] - ema_12) / df['ATR']
+    df['Dist_EMA_26'] = (df['Close'] - ema_26) / df['ATR']
+
+    # RSI (Already stationary 0-100)
     delta = df['Close'].diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss.replace(0, 1e-10)
     df['RSI'] = 100 - (100 / (1 + rs))
 
-    df['MACD'] = df['EMA_12'] - df['EMA_26']
-    df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
-    df['MACD_diff'] = df['MACD'] - df['MACD_signal']
+    # MACD (Normalize by ATR)
+    macd = ema_12 - ema_26
+    macd_signal = macd.ewm(span=9, adjust=False).mean()
+    df['MACD_norm'] = macd / df['ATR']
+    df['MACD_signal_norm'] = macd_signal / df['ATR']
+    df['MACD_diff_norm'] = (macd - macd_signal) / df['ATR']
 
+    # Bollinger Bands
     bb_sma = df['Close'].rolling(window=20).mean()
-    bb_std = df['Close'].rolling(window=20).std()
-    df['BB_upper'] = bb_sma + (bb_std * 2)
-    df['BB_lower'] = bb_sma - (bb_std * 2)
-    df['BB_middle'] = bb_sma
+    bb_std = df['Close'].rolling(window=20).std().replace(0, 1e-10)
+    # Feature 1: Position within bands (-1 to 1)
+    df['BB_Position'] = (df['Close'] - bb_sma) / (bb_std * 2)
+    # Feature 2: Band width normalized by ATR
+    df['BB_Width_norm'] = (bb_std * 4) / df['ATR']
 
+    # Returns (Already stationary)
     df['returns'] = df['Close'].pct_change()
     for lag in range(1, 6):
         df[f'returns_lag_{lag}'] = df['returns'].shift(lag)
-        df[f'close_lag_{lag}'] = df['Close'].shift(lag)
         
     df['volatility'] = df['returns'].rolling(window=20).std()
     df['returns_squared'] = df['returns'] ** 2
     
-    # Stochastic Oscillator
+    # Stochastic Oscillator (Already stationary 0-100)
     low_14 = df['Low'].rolling(window=14).min()
     high_14 = df['High'].rolling(window=14).max()
     df['Stoch_K'] = 100 * ((df['Close'] - low_14) / (high_14 - low_14).replace(0, 1e-10))
     df['Stoch_D'] = df['Stoch_K'].rolling(window=3).mean()
     
-    # Momentum
-    df['Momentum_10'] = df['Close'] - df['Close'].shift(10)
+    # Momentum (Normalize by ATR)
+    df['Momentum_10_norm'] = (df['Close'] - df['Close'].shift(10)) / df['ATR']
     
     # Categorical Time Features for TFT
     df['Hour'] = df.index.hour
@@ -155,12 +175,23 @@ def add_all_features(df):
 
 def add_essential_features(df):
     """ESSENTIAL features applied to exogenous non-main assets."""
-    df['SMA_20'] = df['Close'].rolling(window=20).mean()
-    df['EMA_12'] = df['Close'].ewm(span=12, adjust=False).mean()
-    df['EMA_26'] = df['Close'].ewm(span=26, adjust=False).mean()
-    df['MACD'] = df['EMA_12'] - df['EMA_26']
+    high_low = df['High'] - df['Low']
+    high_close = np.abs(df['High'] - df['Close'].shift())
+    low_close = np.abs(df['Low'] - df['Close'].shift())
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    atr = tr.rolling(14).mean().replace(0, 1e-10)
+
+    sma_20 = df['Close'].rolling(window=20).mean()
+    df['Dist_SMA_20'] = (df['Close'] - sma_20) / atr
+    
+    ema_12 = df['Close'].ewm(span=12, adjust=False).mean()
+    ema_26 = df['Close'].ewm(span=26, adjust=False).mean()
+    macd = ema_12 - ema_26
+    df['MACD_norm'] = macd / atr
     df['returns'] = df['Close'].pct_change()
-    return df[['Close', 'returns', 'SMA_20', 'EMA_12', 'EMA_26', 'MACD']]
+    
+    # Do NOT return raw non-stationary columns
+    return df[['returns', 'Dist_SMA_20', 'MACD_norm']]
 
 def generate_timeframe_data(timeframe_str, is_base=False):
     print(f"--- Processing {timeframe_str} Timeframe ---")
