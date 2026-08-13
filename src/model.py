@@ -317,7 +317,7 @@ class PricePredictor:
         df_1h_t, df_4h_t, df_1d_t, df_1w_t = dfs_train
         df_1h_v, df_4h_v, df_1d_v, df_1w_v = dfs_val
 
-        X1_t, X4_t, X1d_t, X1w_t, y_t = self.create_sequences(df_1h_t, df_4h_t, df_1d_t, df_1w_t, clean_noise=True, target_col=target_col)
+        X1_t, X4_t, X1d_t, X1w_t, y_t = self.create_sequences(df_1h_t, df_4h_t, df_1d_t, df_1w_t, clean_noise=False, target_col=target_col)
         X1_v, X4_v, X1d_v, X1w_v, y_v = self.create_sequences(df_1h_v, df_4h_v, df_1d_v, df_1w_v, clean_noise=False, target_col=target_col)
 
         X1_t = torch.FloatTensor(X1_t).to(self.device)
