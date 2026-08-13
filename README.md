@@ -18,13 +18,13 @@ A professional FX trading bot powered by **HistData.com 1-minute data**, **Tempo
 - **3-Class Output**: Flat (0), Up (1), Down (2) for robust market regime detection
 
 ### 🤖 Neural Architecture (Dual-Brain TFT + PPO)
-- **Deep Reinforcement Learning (PPO)**: The core trading agent uses Proximal Policy Optimization (PPO) from Stable-Baselines3 to make discrete actions (Flat, Long, Short).
+- **Deep Reinforcement Learning (PPO)**: The core trading agent uses Proximal Policy Optimization (PPO) from Stable-Baselines3 to make **continuous actions** `[-1.0, 1.0]`. This allows the agent to dynamically size positions from 1.0x to 7.7x base risk based on conviction, with a designated "Flat Zone" to stay out of the market.
 - **Dual-Brain TemporalFusionTransformer**: Two independently trained TFTs (`tft_long.pth` and `tft_short.pth`) act as feature extractors.
   - The models process 30-timestep sequences of engineered features.
   - Their outputs are concatenated into a **256-dimensional state embedding** that provides the PPO agent with a unified view of bullish and bearish momentum.
 - **Self-Supervised MTF & PyTorch ENN**:
   - Uses Multi-Timeframe (MTF) Supervised Contrastive Learning.
-  - Custom **PyTorch ENN** (Edited Nearest Neighbors) to aggressively clean contradictory labels and eliminate noise from the dataset.
+  - Custom **PyTorch ENN** (Edited Nearest Neighbors) to aggressively clean contradictory labels and eliminate noise from the dataset (currently disabled in config for speed).
   - Implements **Macro F1 Early Stopping** to maintain balance and prevent overfitting.
 
 ### 📈 Risk Management & Reward Function
@@ -509,7 +509,6 @@ train_score, val_score = model.train(str(train_file), epochs=100, batch_size=32)
 - [ ] Real-time trading execution (broker integration)
 - [ ] Advanced walk-forward validation (rolling windows)
 - [ ] Ensemble methods (multiple models voting)
-- [ ] Reinforcement learning for dynamic position sizing
 - [ ] Sentiment analysis integration (news/macro)
 - [ ] Genetic algorithm for hyperparameter optimization
 
