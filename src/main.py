@@ -141,7 +141,10 @@ def main():
     )
     
     ppo_model = PPO("MlpPolicy", train_env, verbose=0, device="cpu")
-    ppo_model.learn(total_timesteps=500000, callback=eval_callback)
+    print("Training first 200,000 steps (No Evaluation)...")
+    ppo_model.learn(total_timesteps=200000)
+    print("Training remaining 300,000 steps (With Evaluation)...")
+    ppo_model.learn(total_timesteps=300000, callback=eval_callback, reset_num_timesteps=False)
     
     try:
         ppo_model = PPO.load(str(models_dir / "best_model.zip"))
