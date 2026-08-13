@@ -313,7 +313,7 @@ class PricePredictor:
                 valid_mask[i] = True
         return df_1h.iloc[valid_mask]
 
-    def train(self, dfs_train, dfs_val, target_col='target_long', epochs=50, batch_size=256, patience=20):
+    def train(self, dfs_train, dfs_val, target_col='target_long', epochs=50, batch_size=256, patience=20, active_augs=None):
         df_1h_t, df_4h_t, df_1d_t, df_1w_t = dfs_train
         df_1h_v, df_4h_v, df_1d_v, df_1w_v = dfs_val
 
@@ -388,8 +388,8 @@ class PricePredictor:
                 optimizer.zero_grad()
                 
                 # Augmentations on 1h (we can leave 4h, 1d, 1w unaugmented for stability)
-                x1_i, x4_i, x1d_i, x1w_i = self.augmenter.augment(b_x1), b_x4, b_x1d, b_x1w
-                x1_j, x4_j, x1d_j, x1w_j = self.augmenter.augment(b_x1), b_x4, b_x1d, b_x1w
+                x1_i, x4_i, x1d_i, x1w_i = self.augmenter.augment(b_x1, active_augs=active_augs), b_x4, b_x1d, b_x1w
+                x1_j, x4_j, x1d_j, x1w_j = self.augmenter.augment(b_x1, active_augs=active_augs), b_x4, b_x1d, b_x1w
                 
                 # Restore original categorical features (augmenter corrupts integers with float noise)
                 if len(cat_indices) > 0:
