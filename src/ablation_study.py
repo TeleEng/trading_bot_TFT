@@ -7,19 +7,18 @@ from model import PricePredictor
 
 # --- Setup Paths & Config ---
 load_dotenv()
-DATA_PATH = Path("../data/processed")
+BASE_DIR = Path(__file__).resolve().parent.parent
+DATA_PATH = BASE_DIR / "data" / "processed"
 MAIN_ASSET = os.getenv("MAIN_ASSET", "EURUSD")
 
 def load_data():
     """Loads and splits the preprocessed data."""
     print("Loading datasets...")
-    # Adjust path if script is run from src/
-    data_dir = DATA_PATH if DATA_PATH.exists() else Path("data/processed")
     
-    df_1h = pd.read_csv(data_dir / f"{MAIN_ASSET}_master_1h.csv", index_col=0, parse_dates=True)
-    df_4h = pd.read_csv(data_dir / f"{MAIN_ASSET}_master_4h.csv", index_col=0, parse_dates=True)
-    df_1d = pd.read_csv(data_dir / f"{MAIN_ASSET}_master_1d.csv", index_col=0, parse_dates=True)
-    df_1w = pd.read_csv(data_dir / f"{MAIN_ASSET}_master_1w.csv", index_col=0, parse_dates=True)
+    df_1h = pd.read_csv(DATA_PATH / f"{MAIN_ASSET}_master_1h.csv", index_col=0, parse_dates=True)
+    df_4h = pd.read_csv(DATA_PATH / f"{MAIN_ASSET}_master_4h.csv", index_col=0, parse_dates=True)
+    df_1d = pd.read_csv(DATA_PATH / f"{MAIN_ASSET}_master_1d.csv", index_col=0, parse_dates=True)
+    df_1w = pd.read_csv(DATA_PATH / f"{MAIN_ASSET}_master_1w.csv", index_col=0, parse_dates=True)
     
     # 60/20/20 split as defined in main.py
     n = len(df_1h)
