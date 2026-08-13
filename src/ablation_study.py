@@ -44,12 +44,13 @@ def run_ablation():
         "All Augmentations": None # None means all available
     }
     
-    results = {}
-    epochs_per_test = 5 # Short run to test convergence speed and representation quality
+    results_list = []
+    epochs_per_test = 20 # Increased epochs for better convergence testing
     
     print("==================================================")
     print("AUGMENTATION ABLATION STUDY")
     print(f"Testing {len(configs)} configurations for {epochs_per_test} epochs each.")
+    print("Testing both LONG and SHORT brains.")
     print("==================================================")
     
     for name, active_augs in configs.items():
@@ -59,33 +60,54 @@ def run_ablation():
         else:
             print("Active Augs: ALL")
             
-        model = PricePredictor(num_classes=2)
+        total_loss = 0
+        total_f1 = 0
         
-        # Train Long Brain
-        train_loss, val_f1 = model.train(
-            train_dfs,
-            val_dfs,
-            target_col="target_long",
-            epochs=epochs_per_test,
-            patience=epochs_per_test, # No early stopping
-            active_augs=active_augs
-        )
+        for target in ["target_long", "target_short"]:
+            print(f"  -> Training {target.upper()} Brain...")
+            model = PricePredictor(num_classes=2)
+            
+            # Train Brain
+            train_loss, val_f1 = model.train(
+                train_dfs,
+                val_dfs,
+                target_col=target,
+                epochs=epochs_per_test,
+                patience=epochs_per_test, # No early stopping
+                active_augs=active_augs
+            )
+            
+            total_loss += train_loss
+            total_f1 += val_f1
+            
+        # Average the metrics
+        avg_loss = total_loss / 2.0
+        avg_f1 = total_f1 / 2.0
         
-        results[name] = {
-            "Train InfoNCE Loss": train_loss,
-            "Peak Val F1": val_f1
-        }
+        results_list.append({
+            "Configuration": name,
+            "Avg Train InfoNCE Loss": avg_loss,
+            "Avg Peak Val F1": avg_f1
+        })
         
     print("\n==================================================")
-    print("ABLATION STUDY RESULTS")
+    print("ABLATION STUDY RESULTS (Averaged Long/Short)")
     print("==================================================")
-    print(f"{'Configuration':<35} | {'Train Loss':<12} | {'Val F1 Score':<12}")
+    print(f"{'Configuration':<35} | {'Avg Train Loss':<14} | {'Avg Val F1':<12}")
     print("-" * 65)
-    for name, metrics in results.items():
-        loss = metrics["Train InfoNCE Loss"]
-        f1 = metrics["Peak Val F1"]
-        print(f"{name:<35} | {loss:<12.4f} | {f1:<12.4f}")
+    
+    # Save to CSV
+    results_df = pd.DataFrame(results_list)
+    results_dir = BASE_DIR / "results"
+    results_dir.mkdir(exist_ok=True)
+    csv_path = results_dir / "ablation_results.csv"
+    results_df.to_csv(csv_path, index=False)
+    
+    for row in results_list:
+        print(f"{row['Configuration']:<35} | {row['Avg Train InfoNCE Loss']:<14.4f} | {row['Avg Peak Val F1']:<12.4f}")
+    
     print("==================================================")
+    print(f"Results successfully saved to {csv_path}")
 
 if __name__ == "__main__":
     run_ablation()
