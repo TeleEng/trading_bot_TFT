@@ -60,18 +60,18 @@ class TestTradingRLEnv(unittest.TestCase):
         self.assertAlmostEqual(self.env.capital, expected_cap, places=2)
         
     def test_agent_action_lockdown(self):
-        self.env.step([4.3]) # Enter long on step 0
+        self.env.step([0.43]) # Enter long on step 0
         pos_before = self.env.position
         self.assertTrue(pos_before > 0)
         
         # Try to reverse (Short) or Close
         # Action 2 (Short) should be ignored because a position is open
-        self.env.step([-4.3])
+        self.env.step([-0.43])
         self.assertEqual(self.env.position, pos_before) # Still long, not reversed
 
     def test_fixed_sl_hit(self):
         # Trigger entry long
-        self.env.step([4.3]) 
+        self.env.step([0.43]) 
         # Entry price = 1.10005
         # SL = entry - 0.0020 = 1.09805
         
@@ -88,7 +88,7 @@ class TestTradingRLEnv(unittest.TestCase):
 
     def test_fixed_tp_hit(self):
         # Trigger entry long
-        self.env.step([4.3]) 
+        self.env.step([0.43]) 
         # Entry = 1.10005
         # TP = entry + (2.5 * 0.0020) = 1.10505
         
@@ -103,7 +103,7 @@ class TestTradingRLEnv(unittest.TestCase):
         self.assertAlmostEqual(self.env.trade_history[-1][1], 6.428, places=3)
         
     def test_timeout_penalty(self):
-        self.env.step([4.3]) # Enter long
+        self.env.step([0.43]) # Enter long
         
         # Fast forward 96 bars
         self.env.bars_held = 95
@@ -125,7 +125,7 @@ class TestTradingRLEnv(unittest.TestCase):
         self.assertAlmostEqual(reward, -0.0042, places=4)
         
         # Scenario 2: Open Long penalty
-        obs, reward, done, trunc, info = self.env.step([4.3])
+        obs, reward, done, trunc, info = self.env.step([0.43])
         self.assertAlmostEqual(reward, -1.558, places=3)
         
         # Scenario 3: Step while in trade (No penalty)
@@ -133,7 +133,7 @@ class TestTradingRLEnv(unittest.TestCase):
         self.assertEqual(reward, 0.0)
 
     def test_rl_reward_sum_long_sl(self):
-        self.env.step([4.3]) # Entry reward: -1.558
+        self.env.step([0.43]) # Entry reward: -1.558
         self.env.df.at[self.env.current_step, 'Low'] = 1.0900 # Force SL hit
         obs, reward, done, trunc, info = self.env.step([0.0]) # Exit reward: -0.572
         
@@ -143,7 +143,7 @@ class TestTradingRLEnv(unittest.TestCase):
         self.assertAlmostEqual(total_rl_reward, -2.13, places=3)
 
     def test_rl_reward_sum_long_tp(self):
-        self.env.step([4.3]) # Entry reward: -1.558
+        self.env.step([0.43]) # Entry reward: -1.558
         # Force TP hit
         self.env.df.at[self.env.current_step, 'Low'] = 1.1000
         self.env.df.at[self.env.current_step, 'High'] = 1.1060
@@ -156,7 +156,7 @@ class TestTradingRLEnv(unittest.TestCase):
         
     def test_rl_reward_sum_short_sl(self):
         # Open Short
-        obs, reward_entry, done, trunc, info = self.env.step([-4.3])
+        obs, reward_entry, done, trunc, info = self.env.step([-0.43])
         self.assertAlmostEqual(reward_entry, -1.73, places=3)
         
         # Force SL hit
@@ -170,7 +170,7 @@ class TestTradingRLEnv(unittest.TestCase):
         self.assertAlmostEqual(total_rl_reward, -2.13, places=3)
 
     def test_rl_reward_sum_short_tp(self):
-        obs, reward_entry, done, trunc, info = self.env.step([-4.3]) # Entry reward: -1.73
+        obs, reward_entry, done, trunc, info = self.env.step([-0.43]) # Entry reward: -1.73
         # Force TP hit (Short 1:4 RR)
         self.env.df.at[self.env.current_step, 'High'] = 1.1010
         self.env.df.at[self.env.current_step, 'Low'] = 1.0900
@@ -183,7 +183,7 @@ class TestTradingRLEnv(unittest.TestCase):
 
     def test_exact_pnl_with_spread(self):
         # Initial capital = 10000.0
-        self.env.step([4.3])
+        self.env.step([0.43])
         # Entry price = 1.1000 + 0.00005 = 1.10005
         # Risk amount = 200.0
         # Risk per unit = 0.0020
@@ -205,7 +205,7 @@ class TestTradingRLEnv(unittest.TestCase):
 
     def test_short_sl_hit(self):
         # Trigger entry short
-        self.env.step([-4.3]) 
+        self.env.step([-0.43]) 
         # Entry price = 1.09995 (Spread = 1.0 pip)
         # SL = entry + 0.0020 = 1.10195
         
@@ -218,7 +218,7 @@ class TestTradingRLEnv(unittest.TestCase):
         self.assertAlmostEqual(self.env.trade_history[-1][1], -0.4, places=3)
         
     def test_short_tp_hit(self):
-        self.env.step([-4.3])
+        self.env.step([-0.43])
         # Entry = 1.09995
         # TP = entry - (4.0 * 0.0020) = 1.09195
         
@@ -232,7 +232,7 @@ class TestTradingRLEnv(unittest.TestCase):
         self.assertAlmostEqual(self.env.trade_history[-1][1], 9.6, places=3)
         
     def test_intrabar_collision_long(self):
-        self.env.step([4.3])
+        self.env.step([0.43])
         # Entry = 1.10005
         # TP = 1.10505, SL = 1.09805
         
@@ -248,7 +248,7 @@ class TestTradingRLEnv(unittest.TestCase):
         self.assertEqual(self.env.trade_history[-1][2], -1)
 
     def test_intrabar_collision_short(self):
-        self.env.step([-4.3])
+        self.env.step([-0.43])
         # Entry = 1.09995
         # TP = 1.09195, SL = 1.10195
         

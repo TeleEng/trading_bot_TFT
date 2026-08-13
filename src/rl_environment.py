@@ -21,9 +21,9 @@ class TradingRLEnv(gym.Env):
         self.slippage = slippage_pips * 0.0001
         self.swap_per_bar = (swap_pips_per_day * 0.0001) / 24.0  # spread across 24 1H bars
         
-        # Continuous Action Space [-10.0, 10.0] for dynamic risk sizing
-        # -3.3 to 3.3 is Flat. Beyond that, scale risk based on abs(action) - 2.3
-        self.action_space = spaces.Box(low=-10.0, high=10.0, shape=(1,), dtype=np.float32)
+        # Continuous Action Space [-1.0, 1.0] for dynamic risk sizing (PPO optimized)
+        # Scaled internally by 10.0 to match the math: -3.3 to 3.3 is Flat.
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
         
         # Observation: emb_size + 1 (local_ratio) + 15 (last 5 trades: action, reward, exit_reason) + 1 (direction) + 1 (unrealized_return)
         emb_size = embeddings.shape[1] if len(embeddings) > 0 else 256
@@ -232,8 +232,9 @@ class TradingRLEnv(gym.Env):
         if self.position == 0 and not trade_closed:
             self.bars_flat += 1
             
-            # Parse Continuous Action
-            action_val = float(action[0]) if isinstance(action, (list, np.ndarray)) else float(action)
+            # Parse Continuous Action (Scale PPO's [-1.0, 1.0] by 10 to reach [-10.0, 10.0])
+            raw_action = float(action[0]) if isinstance(action, (list, np.ndarray)) else float(action)
+            action_val = raw_action * 10.0
             
             if -3.3 <= action_val <= 3.3:
                 target_direction = 0.0
