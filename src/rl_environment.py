@@ -10,6 +10,12 @@ class TradingRLEnv(gym.Env):
         self.embeddings = embeddings
         self.df = df
         
+        # Extract numpy arrays for O(1) lookups during RL steps (massive speedup over pandas .iloc)
+        self.close_prices = self.df['Close'].values
+        self.high_prices = self.df['High'].values if 'High' in self.df.columns else self.close_prices
+        self.low_prices = self.df['Low'].values if 'Low' in self.df.columns else self.close_prices
+        self.atr_values = self.df['ATR'].values if 'ATR' in self.df.columns else self.close_prices * 0.005
+        
         self.long_tp_mult = long_tp_mult
         self.long_sl_mult = long_sl_mult
         self.short_tp_mult = short_tp_mult
@@ -89,8 +95,7 @@ class TradingRLEnv(gym.Env):
         for action, reward, reason in self.trade_history[-5:]:
             hist.extend([float(action), float(reward), float(reason)])
             
-        current_row = self.df.iloc[self.current_step]
-        price = current_row['Close']
+        price = self.close_prices[self.current_step]
         
         current_direction = 1.0 if self.position > 0 else (-1.0 if self.position < 0 else 0.0)
         unrealized_return = 0.0
@@ -182,11 +187,10 @@ class TradingRLEnv(gym.Env):
         if self.current_step >= len(self.df) - 1 or self.portfolio_value <= 0:
             return self._get_obs(), 0.0, True, False, {}
             
-        current_row = self.df.iloc[self.current_step]
-        price = current_row['Close']
-        high = current_row.get('High', price)
-        low = current_row.get('Low', price)
-        atr = current_row.get('ATR', price * 0.005)
+        price = self.close_prices[self.current_step]
+        high = self.high_prices[self.current_step]
+        low = self.low_prices[self.current_step]
+        atr = self.atr_values[self.current_step]
         
         # Cap ATR
         atr = max(price * 0.001, min(atr, price * 0.02))
