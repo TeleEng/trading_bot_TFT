@@ -102,7 +102,7 @@ def add_triple_barrier_labels(df, atr_window=14,
     df['target_short'] = labels_short
     return df
 
-def add_all_features(df):
+def add_all_features(df, is_base=True):
     """FULL feature engineering applied exclusively to the MAIN asset."""
     # 1. Calculate ATR for normalization
     high_low = df['High'] - df['Low']
@@ -168,8 +168,9 @@ def add_all_features(df):
     df['DayOfWeek'] = df.index.dayofweek
 
     
-    # 6-Hour Triple Barrier
-    df = add_triple_barrier_labels(df)
+    # Decoupled Triple Barrier Labels only on base timeframe
+    if is_base:
+        df = add_triple_barrier_labels(df)
     
     return df
 
@@ -217,11 +218,7 @@ def generate_timeframe_data(timeframe_str, is_base=False):
         else:
             exogenous_dfs.append((ticker, df))
 
-    main_df = add_all_features(main_df)
-    
-    # Only the base timeframe needs the target labels
-    if is_base:
-        main_df = add_triple_barrier_labels(main_df)
+    main_df = add_all_features(main_df, is_base=is_base)
     
     processed_exogenous = {}
     for ticker, df in exogenous_dfs:

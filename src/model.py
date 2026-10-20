@@ -424,21 +424,13 @@ class PricePredictor:
             all_labels = []
             with torch.no_grad():
                 for b_x1, b_x4, b_x1d, b_x1w, b_y in val_loader:
-                    x1_i, x4_i, x1d_i, x1w_i = self.augmenter.augment(b_x1), b_x4, b_x1d, b_x1w
-                    x1_j, x4_j, x1d_j, x1w_j = self.augmenter.augment(b_x1), b_x4, b_x1d, b_x1w
-                    
-                    if len(cat_indices) > 0:
-                        x1_i[:, :, cat_indices] = b_x1[:, :, cat_indices]
-                        x1_j[:, :, cat_indices] = b_x1[:, :, cat_indices]
-                        
-                    _, z_i, c_i, logits_i = self.model(x1_i, x4_i, x1d_i, x1w_i)
-                    _, z_j, c_j, logits_j = self.model(x1_j, x4_j, x1d_j, x1w_j)
-                    loss_contrastive = criterion(z_i, z_j, c_i, c_j, b_y)
-                    loss_ce = (ce_criterion(logits_i, b_y) + ce_criterion(logits_j, b_y)) / 2.0
-                    total_val_loss += (loss_contrastive + loss_ce).item()
+                    # Clean forward pass on uncorrupted validation data
+                    _, z_val, c_val, logits_val = self.model(b_x1, b_x4, b_x1d, b_x1w)
+                    loss_ce = ce_criterion(logits_val, b_y)
+                    total_val_loss += loss_ce.item()
                     total_val_ce += loss_ce.item()
-                    # Accuracy on view i
-                    preds = logits_i.argmax(dim=1)
+                    
+                    preds = logits_val.argmax(dim=1)
                     correct += (preds == b_y).sum().item()
                     total_samples += b_y.size(0)
                     all_preds.extend(preds.cpu().numpy())
@@ -624,3 +616,21 @@ class PricePredictor:
             
         self.model.eval()
         print(f"Model loaded from {path}")
+
+    @staticmethod
+    def save_cached_embeddings(path, embeddings):
+        from pathlib import Path
+        import numpy as np
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        np.save(p, embeddings)
+        print(f"[CACHE] Saved embeddings to {p} (shape: {embeddings.shape})")
+
+    @staticmethod
+    def load_cached_embeddings(path):
+        from pathlib import Path
+        import numpy as np
+        p = Path(path)
+        emb = np.load(p)
+        print(f"[CACHE] Loaded embeddings from {p} (shape: {emb.shape})")
+        return emb
