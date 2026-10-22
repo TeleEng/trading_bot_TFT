@@ -31,12 +31,12 @@ MAIN_ASSET = os.getenv("MAIN_ASSET", "EURUSD")
 OUTPUT_PATH.mkdir(parents=True, exist_ok=True)
 
 def add_triple_barrier_labels(df, atr_window=14, 
-                              long_tp_mult=2.5, long_sl_mult=1.0, 
-                              short_tp_mult=4.0, short_sl_mult=1.0, 
-                              max_wait=48):
+                              long_tp_mult=1.5, long_sl_mult=1.0, 
+                              short_tp_mult=1.5, short_sl_mult=1.0, 
+                              max_wait=72):
     """
-    Implements a decoupled Triple Barrier Method using dynamic ATR.
-    Longs use 1:2.5 R/R. Shorts use 1:4 R/R.
+    Implements a balanced Triple Barrier Method using dynamic ATR.
+    Longs use 1:1.5 R/R. Shorts use 1:1.5 R/R with 72-hour horizon.
     """
     # 1. Calculate Average True Range (ATR)
     high_low = df['High'] - df['Low']
@@ -235,7 +235,7 @@ def generate_timeframe_data(timeframe_str, is_base=False):
     unified.ffill(limit=12, inplace=True)
     unified.dropna(inplace=True)
     if is_base:
-        unified = unified.iloc[:-48] # Drop final rows with unresolved labels
+        unified = unified.iloc[:-72] # Drop final rows with unresolved labels
 
     unified['hour_sin'] = np.sin(2 * np.pi * unified.index.hour / 24)
     unified['hour_cos'] = np.cos(2 * np.pi * unified.index.hour / 24)

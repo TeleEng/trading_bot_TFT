@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 RL Hyperparameter Grid Search & Benchmark Runner
-Tests multiple reward formulations, action space deadzones, and exploration settings.
+Tests balanced 1.5:1 Risk/Reward, zero flat penalty (patience), trend filtering, and cooldown rules.
 Optimized to execute within the GPU/CPU training budget using precomputed embeddings.
 """
 import os
@@ -22,73 +22,86 @@ from stable_baselines3.common.monitor import Monitor
 
 def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
                      train_df, val_df, test_df,
-                     timesteps_per_config=250000):
+                     timesteps_per_config=300000):
     models_dir = base_dir / "models"
     results_dir = base_dir / "results"
     models_dir.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
     
-    # Grid Search Configurations
+    # Grid Search Configurations (Balanced 1.5:1 R:R, Zero Inactivity Penalty, Trend Filter & Cooldown)
     configs = [
         {
-            "name": "AsymRR_dz0.10_ent0.01",
+            "name": "AsymRR_dz0.10_cool4_filterTrue",
             "reward_mode": "asymmetric_rr",
             "deadzone": 0.10,
             "ent_coef": 0.01,
             "lr": 3e-4,
-            "flat_penalty": 0.005,
-            "max_risk_multiplier": 5.0
+            "flat_penalty": 0.0,
+            "max_risk_multiplier": 1.5,
+            "cooldown_bars": 4,
+            "trend_filter": True
         },
         {
-            "name": "AsymRR_dz0.15_ent0.02",
+            "name": "AsymRR_dz0.15_cool4_filterTrue",
             "reward_mode": "asymmetric_rr",
             "deadzone": 0.15,
-            "ent_coef": 0.02,
+            "ent_coef": 0.01,
             "lr": 3e-4,
-            "flat_penalty": 0.005,
-            "max_risk_multiplier": 5.0
+            "flat_penalty": 0.0,
+            "max_risk_multiplier": 1.5,
+            "cooldown_bars": 4,
+            "trend_filter": True
         },
         {
-            "name": "AsymRR_dz0.08_ent0.01_lr1e4",
+            "name": "AsymRR_dz0.10_cool4_filterFalse",
             "reward_mode": "asymmetric_rr",
-            "deadzone": 0.08,
+            "deadzone": 0.10,
+            "ent_coef": 0.01,
+            "lr": 3e-4,
+            "flat_penalty": 0.0,
+            "max_risk_multiplier": 1.5,
+            "cooldown_bars": 4,
+            "trend_filter": False
+        },
+        {
+            "name": "DSR_dz0.10_cool4_filterTrue",
+            "reward_mode": "dsr",
+            "deadzone": 0.10,
+            "ent_coef": 0.01,
+            "lr": 3e-4,
+            "flat_penalty": 0.0,
+            "max_risk_multiplier": 1.5,
+            "cooldown_bars": 4,
+            "trend_filter": True
+        },
+        {
+            "name": "AsymRR_dz0.20_cool6_filterTrue",
+            "reward_mode": "asymmetric_rr",
+            "deadzone": 0.20,
             "ent_coef": 0.01,
             "lr": 1e-4,
-            "flat_penalty": 0.005,
-            "max_risk_multiplier": 5.0
+            "flat_penalty": 0.0,
+            "max_risk_multiplier": 1.5,
+            "cooldown_bars": 6,
+            "trend_filter": True
         },
         {
-            "name": "DSR_dz0.10_ent0.01",
-            "reward_mode": "dsr",
-            "deadzone": 0.10,
-            "ent_coef": 0.01,
-            "lr": 3e-4,
-            "flat_penalty": 0.005,
-            "max_risk_multiplier": 5.0
-        },
-        {
-            "name": "DSR_dz0.15_ent0.02",
-            "reward_mode": "dsr",
-            "deadzone": 0.15,
-            "ent_coef": 0.02,
-            "lr": 3e-4,
-            "flat_penalty": 0.005,
-            "max_risk_multiplier": 5.0
-        },
-        {
-            "name": "DensePnL_dz0.10_ent0.01",
+            "name": "DensePnL_dz0.10_cool4_filterTrue",
             "reward_mode": "pnl_dense",
             "deadzone": 0.10,
             "ent_coef": 0.01,
             "lr": 3e-4,
-            "flat_penalty": 0.005,
-            "max_risk_multiplier": 5.0
+            "flat_penalty": 0.0,
+            "max_risk_multiplier": 1.5,
+            "cooldown_bars": 4,
+            "trend_filter": True
         }
     ]
     
     print("\n" + "="*70)
     print(f"STARTING RL HYPERPARAMETER GRID SEARCH ({len(configs)} CONFIGURATIONS)")
     print(f"Training Budget: {timesteps_per_config:,} timesteps per configuration")
+    print(f"Key Features: 1.5:1 Balanced R/R | Zero Inactivity Penalty | Trend Filter & Cooldown")
     print("="*70)
     
     leaderboard = []
@@ -98,14 +111,19 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
     
     for idx, cfg in enumerate(configs, 1):
         print(f"\n[{idx}/{len(configs)}] Evaluating Config: {cfg['name']}")
-        print(f"  -> Reward Mode: {cfg['reward_mode']} | Deadzone: {cfg['deadzone']} | Ent Coef: {cfg['ent_coef']} | LR: {cfg['lr']}")
+        print(f"  -> Reward: {cfg['reward_mode']} | Deadzone: {cfg['deadzone']} | Filter: {cfg['trend_filter']} | Cooldown: {cfg['cooldown_bars']}")
         
         train_env = TradingRLEnv(
             train_embeddings, train_df,
+            long_tp_mult=1.5, long_sl_mult=1.0,
+            short_tp_mult=1.5, short_sl_mult=1.0,
             deadzone=cfg['deadzone'],
             reward_mode=cfg['reward_mode'],
             flat_penalty=cfg['flat_penalty'],
             max_risk_multiplier=cfg['max_risk_multiplier'],
+            cooldown_bars=cfg['cooldown_bars'],
+            trend_filter=cfg['trend_filter'],
+            max_wait_bars=72,
             is_eval=False
         )
         train_env = Monitor(train_env)
@@ -135,10 +153,15 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
         # Run Out-Of-Sample Backtest on Held-Out Test Set
         test_env = TradingRLEnv(
             test_embeddings, test_df,
+            long_tp_mult=1.5, long_sl_mult=1.0,
+            short_tp_mult=1.5, short_sl_mult=1.0,
             deadzone=cfg['deadzone'],
             reward_mode=cfg['reward_mode'],
             flat_penalty=cfg['flat_penalty'],
             max_risk_multiplier=cfg['max_risk_multiplier'],
+            cooldown_bars=cfg['cooldown_bars'],
+            trend_filter=cfg['trend_filter'],
+            max_wait_bars=72,
             is_eval=True
         )
         
@@ -178,7 +201,7 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
             "Configuration": cfg['name'],
             "Reward Mode": cfg['reward_mode'],
             "Deadzone": cfg['deadzone'],
-            "Ent Coef": cfg['ent_coef'],
+            "Filter": cfg['trend_filter'],
             "Total Trades": total_trades,
             "Total Return (%)": total_return,
             "Sharpe Ratio": sharpe,
@@ -187,12 +210,11 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
             "Profit Factor": profit_factor
         })
         
-        # Select champion model (favoring positive trades and superior Sharpe)
+        # Select champion model
         if total_trades > 0 and sharpe > best_sharpe:
             best_sharpe = sharpe
             champion_config = cfg
             champion_results_df = test_results
-            # Save as official best model
             agent.save(str(models_dir / "best_model.zip"))
             print(f"  *** NEW CHAMPION MODEL: {cfg['name']} (Sharpe: {sharpe:.2f}) ***")
             

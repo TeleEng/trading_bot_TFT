@@ -65,8 +65,8 @@ def main():
         file_1d = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master_1d.csv"
         file_1w = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master_1w.csv"
         
-        if not file_1h.exists():
-            print("\n[Phase 1] Preprocessed data not found. Running Preprocessing...")
+        if not file_1h.exists() or args.force_retrain:
+            print("\n[Phase 1] Processing MTF data with balanced 1.5:1 Triple Barrier labels...")
             process_all_data()
             
         df_1h = pd.read_csv(file_1h, index_col=0, parse_dates=True)
@@ -194,22 +194,32 @@ def main():
         return
 
     # Standard Execution: Train Champion PPO Configuration
-    print("\n[Phase 4] Training Champion RL Agent (PPO with Active Exploration & Decoupled R:R)...")
+    print("\n[Phase 4] Training Champion RL Agent (PPO with Balanced 1.5:1 R:R, Zero Inactivity Penalty, Trend Filter & Cooldown)...")
     
     train_env = TradingRLEnv(
         train_embeddings, train_df_aligned,
+        long_tp_mult=1.5, long_sl_mult=1.0,
+        short_tp_mult=1.5, short_sl_mult=1.0,
         deadzone=0.10,
         reward_mode="asymmetric_rr",
-        flat_penalty=0.005,
-        max_risk_multiplier=5.0,
+        flat_penalty=0.0,
+        max_risk_multiplier=1.5,
+        cooldown_bars=4,
+        trend_filter=True,
+        max_wait_bars=72,
         is_eval=False
     )
     val_env = TradingRLEnv(
         val_embeddings, val_df_aligned,
+        long_tp_mult=1.5, long_sl_mult=1.0,
+        short_tp_mult=1.5, short_sl_mult=1.0,
         deadzone=0.10,
         reward_mode="asymmetric_rr",
-        flat_penalty=0.005,
-        max_risk_multiplier=5.0,
+        flat_penalty=0.0,
+        max_risk_multiplier=1.5,
+        cooldown_bars=4,
+        trend_filter=True,
+        max_wait_bars=72,
         is_eval=True
     )
     
@@ -254,10 +264,15 @@ def main():
     print("\n[Phase 5] Running Out-Of-Sample Backtest with RL Agent...")
     test_env = TradingRLEnv(
         test_embeddings, test_df_aligned,
+        long_tp_mult=1.5, long_sl_mult=1.0,
+        short_tp_mult=1.5, short_sl_mult=1.0,
         deadzone=0.10,
         reward_mode="asymmetric_rr",
-        flat_penalty=0.005,
-        max_risk_multiplier=5.0,
+        flat_penalty=0.0,
+        max_risk_multiplier=1.5,
+        cooldown_bars=4,
+        trend_filter=True,
+        max_wait_bars=72,
         is_eval=True
     )
     

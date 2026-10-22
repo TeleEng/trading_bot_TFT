@@ -405,7 +405,8 @@ class PricePredictor:
                 # Classification loss (average over both views)
                 loss_ce = (ce_criterion(logits_i, b_y) + ce_criterion(logits_j, b_y)) / 2.0
                 
-                loss = loss_contrastive + loss_ce
+                # Balanced Multi-Task Loss: Scale CE by 30x so directional prediction guides representation
+                loss = loss_contrastive + 30.0 * loss_ce
                 loss.backward()
                 optimizer.step()
                 total_loss += loss.item()
