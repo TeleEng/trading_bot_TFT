@@ -108,23 +108,30 @@ def main():
     val_df_aligned = model_template.get_aligned_df(val_1h, df_4h, df_1d, df_1w)
     test_df_aligned = model_template.get_aligned_df(test_1h, df_4h, df_1d, df_1w)
 
-    # Embedding Cache Paths
+    # Embedding & Probability Cache Paths
     train_emb_path = models_dir / "train_embeddings.npy"
     val_emb_path = models_dir / "val_embeddings.npy"
     test_emb_path = models_dir / "test_embeddings.npy"
+    train_prob_path = models_dir / "train_probabilities.npy"
+    val_prob_path = models_dir / "val_probabilities.npy"
+    test_prob_path = models_dir / "test_probabilities.npy"
     
     embeddings_cached = (
         train_emb_path.exists() and val_emb_path.exists() and test_emb_path.exists()
+        and train_prob_path.exists() and val_prob_path.exists() and test_prob_path.exists()
     )
     
     if embeddings_cached and not args.force_retrain:
-        print("\n[INFO] Found cached embeddings on disk! Loading precomputed embeddings...")
+        print("\n[INFO] Found cached embeddings and probabilities on disk! Loading...")
         train_embeddings = np.load(train_emb_path)
         val_embeddings = np.load(val_emb_path)
         test_embeddings = np.load(test_emb_path)
-        print(f"  Loaded Train Embeddings: {train_embeddings.shape}")
-        print(f"  Loaded Val Embeddings:   {val_embeddings.shape}")
-        print(f"  Loaded Test Embeddings:  {test_embeddings.shape}")
+        train_probabilities = np.load(train_prob_path)
+        val_probabilities = np.load(val_prob_path)
+        test_probabilities = np.load(test_prob_path)
+        print(f"  Loaded Train Embeddings: {train_embeddings.shape}, Probs: {train_probabilities.shape}")
+        print(f"  Loaded Val Embeddings:   {val_embeddings.shape}, Probs: {val_probabilities.shape}")
+        print(f"  Loaded Test Embeddings:  {test_embeddings.shape}, Probs: {test_probabilities.shape}")
     else:
         long_model_path = models_dir / "tft_long.pth"
         short_model_path = models_dir / "tft_short.pth"
@@ -162,7 +169,7 @@ def main():
             print(f"Final InfoNCE Loss (Short) - Train: {train_score_s:.4f} | Val F1: {val_score_s:.4f}")
             model_short.save(str(short_model_path))
 
-        print("\n[Phase 3.8] Generating & Caching 256-d Multi-Timeframe Embeddings...")
+        print("\n[Phase 3.8] Generating & Caching 256-d Multi-Timeframe Embeddings & Probabilities...")
         train_emb_l = model_long.predict_batch_embeddings(train_dfs)
         train_emb_s = model_short.predict_batch_embeddings(train_dfs)
         train_embeddings = np.concatenate([train_emb_l, train_emb_s], axis=1)
@@ -175,10 +182,25 @@ def main():
         test_emb_s = model_short.predict_batch_embeddings(test_dfs)
         test_embeddings = np.concatenate([test_emb_l, test_emb_s], axis=1)
 
+        train_prob_l = model_long.predict_batch_classified(train_dfs)[:, 1]
+        train_prob_s = model_short.predict_batch_classified(train_dfs)[:, 1]
+        train_probabilities = np.column_stack([train_prob_l, train_prob_s])
+
+        val_prob_l = model_long.predict_batch_classified(val_dfs)[:, 1]
+        val_prob_s = model_short.predict_batch_classified(val_dfs)[:, 1]
+        val_probabilities = np.column_stack([val_prob_l, val_prob_s])
+
+        test_prob_l = model_long.predict_batch_classified(test_dfs)[:, 1]
+        test_prob_s = model_short.predict_batch_classified(test_dfs)[:, 1]
+        test_probabilities = np.column_stack([test_prob_l, test_prob_s])
+
         np.save(train_emb_path, train_embeddings)
         np.save(val_emb_path, val_embeddings)
         np.save(test_emb_path, test_embeddings)
-        print("Embeddings successfully cached to disk!")
+        np.save(train_prob_path, train_probabilities)
+        np.save(val_prob_path, val_probabilities)
+        np.save(test_prob_path, test_probabilities)
+        print("Embeddings & probabilities successfully cached to disk!")
 
     # Check if user requested Grid Search
     if args.grid_search:
@@ -186,6 +208,9 @@ def main():
         run_grid_search(
             train_embeddings, val_embeddings, test_embeddings,
             train_df_aligned, val_df_aligned, test_df_aligned,
+            train_probs=train_probabilities,
+            val_probs=val_probabilities,
+            test_probs=test_probabilities,
             timesteps_per_config=args.timesteps
         )
         print("\n" + "="*60)
@@ -194,32 +219,36 @@ def main():
         return
 
     # Standard Execution: Train Champion PPO Configuration
-    print("\n[Phase 4] Training Champion RL Agent (PPO with Balanced 1.5:1 R:R, Zero Inactivity Penalty, Trend Filter & Cooldown)...")
+    print("\n[Phase 4] Training Champion RL Agent (PPO with 3.0x/2.0x ATR R:R, Backbone Gating & Net-of-Cost Rewards)...")
     
     train_env = TradingRLEnv(
         train_embeddings, train_df_aligned,
-        long_tp_mult=1.5, long_sl_mult=1.0,
-        short_tp_mult=1.5, short_sl_mult=1.0,
-        deadzone=0.10,
-        reward_mode="asymmetric_rr",
+        probabilities=train_probabilities,
+        long_tp_mult=3.0, long_sl_mult=2.0,
+        short_tp_mult=3.0, short_sl_mult=2.0,
+        deadzone=0.20,
+        min_confidence=0.52,
+        reward_mode="net_rr",
         flat_penalty=0.0,
         max_risk_multiplier=1.5,
         cooldown_bars=4,
         trend_filter=True,
-        max_wait_bars=72,
+        max_wait_bars=96,
         is_eval=False
     )
     val_env = TradingRLEnv(
         val_embeddings, val_df_aligned,
-        long_tp_mult=1.5, long_sl_mult=1.0,
-        short_tp_mult=1.5, short_sl_mult=1.0,
-        deadzone=0.10,
-        reward_mode="asymmetric_rr",
+        probabilities=val_probabilities,
+        long_tp_mult=3.0, long_sl_mult=2.0,
+        short_tp_mult=3.0, short_sl_mult=2.0,
+        deadzone=0.20,
+        min_confidence=0.52,
+        reward_mode="net_rr",
         flat_penalty=0.0,
         max_risk_multiplier=1.5,
         cooldown_bars=4,
         trend_filter=True,
-        max_wait_bars=72,
+        max_wait_bars=96,
         is_eval=True
     )
     
@@ -264,15 +293,17 @@ def main():
     print("\n[Phase 5] Running Out-Of-Sample Backtest with RL Agent...")
     test_env = TradingRLEnv(
         test_embeddings, test_df_aligned,
-        long_tp_mult=1.5, long_sl_mult=1.0,
-        short_tp_mult=1.5, short_sl_mult=1.0,
-        deadzone=0.10,
-        reward_mode="asymmetric_rr",
+        probabilities=test_probabilities,
+        long_tp_mult=3.0, long_sl_mult=2.0,
+        short_tp_mult=3.0, short_sl_mult=2.0,
+        deadzone=0.20,
+        min_confidence=0.52,
+        reward_mode="net_rr",
         flat_penalty=0.0,
         max_risk_multiplier=1.5,
         cooldown_bars=4,
         trend_filter=True,
-        max_wait_bars=72,
+        max_wait_bars=96,
         is_eval=True
     )
     

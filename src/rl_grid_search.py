@@ -22,18 +22,20 @@ from stable_baselines3.common.monitor import Monitor
 
 def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
                      train_df, val_df, test_df,
+                     train_probs=None, val_probs=None, test_probs=None,
                      timesteps_per_config=300000):
     models_dir = base_dir / "models"
     results_dir = base_dir / "results"
     models_dir.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
     
-    # Grid Search Configurations (Balanced 1.5:1 R:R, Zero Inactivity Penalty, Trend Filter & Cooldown)
+    # Grid Search Configurations (Wide 3:2 ATR R:R, Backbone Prob Gating, Net-of-Cost PnL, Trend Filter & Cooldown)
     configs = [
         {
-            "name": "AsymRR_dz0.10_cool4_filterTrue",
-            "reward_mode": "asymmetric_rr",
-            "deadzone": 0.10,
+            "name": "NetRR_dz0.20_conf0.52_filterTrue",
+            "reward_mode": "net_rr",
+            "deadzone": 0.20,
+            "min_confidence": 0.52,
             "ent_coef": 0.01,
             "lr": 3e-4,
             "flat_penalty": 0.0,
@@ -42,9 +44,34 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
             "trend_filter": True
         },
         {
-            "name": "AsymRR_dz0.15_cool4_filterTrue",
-            "reward_mode": "asymmetric_rr",
+            "name": "NetRR_dz0.25_conf0.50_filterTrue",
+            "reward_mode": "net_rr",
+            "deadzone": 0.25,
+            "min_confidence": 0.50,
+            "ent_coef": 0.01,
+            "lr": 3e-4,
+            "flat_penalty": 0.0,
+            "max_risk_multiplier": 1.5,
+            "cooldown_bars": 4,
+            "trend_filter": True
+        },
+        {
+            "name": "DSR_dz0.20_conf0.52_filterTrue",
+            "reward_mode": "dsr",
+            "deadzone": 0.20,
+            "min_confidence": 0.52,
+            "ent_coef": 0.01,
+            "lr": 3e-4,
+            "flat_penalty": 0.0,
+            "max_risk_multiplier": 1.5,
+            "cooldown_bars": 4,
+            "trend_filter": True
+        },
+        {
+            "name": "DSR_dz0.15_conf0.50_filterTrue",
+            "reward_mode": "dsr",
             "deadzone": 0.15,
+            "min_confidence": 0.50,
             "ent_coef": 0.01,
             "lr": 3e-4,
             "flat_penalty": 0.0,
@@ -53,55 +80,35 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
             "trend_filter": True
         },
         {
-            "name": "AsymRR_dz0.10_cool4_filterFalse",
-            "reward_mode": "asymmetric_rr",
-            "deadzone": 0.10,
+            "name": "DensePnL_dz0.20_conf0.52_filterTrue",
+            "reward_mode": "pnl_dense",
+            "deadzone": 0.20,
+            "min_confidence": 0.52,
+            "ent_coef": 0.01,
+            "lr": 3e-4,
+            "flat_penalty": 0.0,
+            "max_risk_multiplier": 1.5,
+            "cooldown_bars": 4,
+            "trend_filter": True
+        },
+        {
+            "name": "NetRR_dz0.15_conf0.50_filterFalse",
+            "reward_mode": "net_rr",
+            "deadzone": 0.15,
+            "min_confidence": 0.50,
             "ent_coef": 0.01,
             "lr": 3e-4,
             "flat_penalty": 0.0,
             "max_risk_multiplier": 1.5,
             "cooldown_bars": 4,
             "trend_filter": False
-        },
-        {
-            "name": "DSR_dz0.10_cool4_filterTrue",
-            "reward_mode": "dsr",
-            "deadzone": 0.10,
-            "ent_coef": 0.01,
-            "lr": 3e-4,
-            "flat_penalty": 0.0,
-            "max_risk_multiplier": 1.5,
-            "cooldown_bars": 4,
-            "trend_filter": True
-        },
-        {
-            "name": "AsymRR_dz0.20_cool6_filterTrue",
-            "reward_mode": "asymmetric_rr",
-            "deadzone": 0.20,
-            "ent_coef": 0.01,
-            "lr": 1e-4,
-            "flat_penalty": 0.0,
-            "max_risk_multiplier": 1.5,
-            "cooldown_bars": 6,
-            "trend_filter": True
-        },
-        {
-            "name": "DensePnL_dz0.10_cool4_filterTrue",
-            "reward_mode": "pnl_dense",
-            "deadzone": 0.10,
-            "ent_coef": 0.01,
-            "lr": 3e-4,
-            "flat_penalty": 0.0,
-            "max_risk_multiplier": 1.5,
-            "cooldown_bars": 4,
-            "trend_filter": True
         }
     ]
     
     print("\n" + "="*70)
     print(f"STARTING RL HYPERPARAMETER GRID SEARCH ({len(configs)} CONFIGURATIONS)")
     print(f"Training Budget: {timesteps_per_config:,} timesteps per configuration")
-    print(f"Key Features: 1.5:1 Balanced R/R | Zero Inactivity Penalty | Trend Filter & Cooldown")
+    print(f"Key Features: 3.0x/2.0x ATR R/R | Prob Gating | Net-of-Cost Rewards | Trend Filter")
     print("="*70)
     
     leaderboard = []
@@ -111,19 +118,21 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
     
     for idx, cfg in enumerate(configs, 1):
         print(f"\n[{idx}/{len(configs)}] Evaluating Config: {cfg['name']}")
-        print(f"  -> Reward: {cfg['reward_mode']} | Deadzone: {cfg['deadzone']} | Filter: {cfg['trend_filter']} | Cooldown: {cfg['cooldown_bars']}")
+        print(f"  -> Reward: {cfg['reward_mode']} | Deadzone: {cfg['deadzone']} | Conf: {cfg.get('min_confidence', 0.50)} | Filter: {cfg['trend_filter']} | Cooldown: {cfg['cooldown_bars']}")
         
         train_env = TradingRLEnv(
             train_embeddings, train_df,
-            long_tp_mult=1.5, long_sl_mult=1.0,
-            short_tp_mult=1.5, short_sl_mult=1.0,
+            probabilities=train_probs,
+            long_tp_mult=3.0, long_sl_mult=2.0,
+            short_tp_mult=3.0, short_sl_mult=2.0,
             deadzone=cfg['deadzone'],
+            min_confidence=cfg.get('min_confidence', 0.50),
             reward_mode=cfg['reward_mode'],
             flat_penalty=cfg['flat_penalty'],
             max_risk_multiplier=cfg['max_risk_multiplier'],
             cooldown_bars=cfg['cooldown_bars'],
             trend_filter=cfg['trend_filter'],
-            max_wait_bars=72,
+            max_wait_bars=96,
             is_eval=False
         )
         train_env = Monitor(train_env)
@@ -153,15 +162,17 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
         # Run Out-Of-Sample Backtest on Held-Out Test Set
         test_env = TradingRLEnv(
             test_embeddings, test_df,
-            long_tp_mult=1.5, long_sl_mult=1.0,
-            short_tp_mult=1.5, short_sl_mult=1.0,
+            probabilities=test_probs,
+            long_tp_mult=3.0, long_sl_mult=2.0,
+            short_tp_mult=3.0, short_sl_mult=2.0,
             deadzone=cfg['deadzone'],
+            min_confidence=cfg.get('min_confidence', 0.50),
             reward_mode=cfg['reward_mode'],
             flat_penalty=cfg['flat_penalty'],
             max_risk_multiplier=cfg['max_risk_multiplier'],
             cooldown_bars=cfg['cooldown_bars'],
             trend_filter=cfg['trend_filter'],
-            max_wait_bars=72,
+            max_wait_bars=96,
             is_eval=True
         )
         

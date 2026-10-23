@@ -31,12 +31,14 @@ MAIN_ASSET = os.getenv("MAIN_ASSET", "EURUSD")
 OUTPUT_PATH.mkdir(parents=True, exist_ok=True)
 
 def add_triple_barrier_labels(df, atr_window=14, 
-                              long_tp_mult=1.5, long_sl_mult=1.0, 
-                              short_tp_mult=1.5, short_sl_mult=1.0, 
-                              max_wait=72):
+                              long_tp_mult=3.0, long_sl_mult=2.0, 
+                              short_tp_mult=3.0, short_sl_mult=2.0, 
+                              max_wait=96):
     """
     Implements a balanced Triple Barrier Method using dynamic ATR.
-    Longs use 1:1.5 R/R. Shorts use 1:1.5 R/R with 72-hour horizon.
+    Longs use 1.5:1 R/R (3.0x ATR TP / 2.0x ATR SL).
+    Shorts use 1.5:1 R/R (3.0x ATR TP / 2.0x ATR SL) with 96-hour horizon.
+    Widening barriers reduces the proportional drag of spread, slippage, and overnight swap.
     """
     # 1. Calculate Average True Range (ATR)
     high_low = df['High'] - df['Low']

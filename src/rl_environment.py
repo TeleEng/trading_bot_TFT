@@ -6,32 +6,38 @@ import numpy as np
 class TradingRLEnv(gym.Env):
     """
     High-performance Trading RL Environment with:
-    - Balanced 1.5:1 Risk/Reward geometry (positive mathematical expectancy)
+    - Balanced 1.5:1 Risk/Reward geometry (3.0x ATR TP / 2.0x ATR SL)
+    - Net-of-cost reward formulation deducting spread, slippage, and overnight swap
+    - Backbone probability confirmation gate (eliminating noise trades)
     - Zero inactivity penalty (rewards patience, eliminates overtrading)
     - Conservative dynamic risk sizing (capped at 1.5% account risk)
     - Post-StopLoss cooldown to prevent revenge-trading whipsaws
     - Higher-timeframe macro trend filter (SMA-50 alignment)
     """
     def __init__(self, embeddings, df, 
-                 long_tp_mult=1.5, long_sl_mult=1.0, 
-                 short_tp_mult=1.5, short_sl_mult=1.0, 
+                 probabilities=None,
+                 long_tp_mult=3.0, long_sl_mult=2.0, 
+                 short_tp_mult=3.0, short_sl_mult=2.0, 
                  initial_capital=10000,
                  spread_pips=1.0, slippage_pips=0.3, swap_pips_per_day=0.5, 
                  is_eval=False,
-                 deadzone=0.10,
-                 reward_mode='asymmetric_rr',
+                 deadzone=0.20,
+                 min_confidence=0.50,
+                 reward_mode='net_rr',
                  flat_penalty=0.0,
                  max_risk_multiplier=1.5,
                  cooldown_bars=4,
                  trend_filter=True,
-                 max_wait_bars=72):
+                 max_wait_bars=96):
         super(TradingRLEnv, self).__init__()
         self.is_eval = is_eval
         self.embeddings = embeddings
         self.df = df
+        self.probabilities = probabilities
         
         # Hyperparameters
         self.deadzone = deadzone
+        self.min_confidence = min_confidence
         self.reward_mode = reward_mode
         self.flat_penalty = flat_penalty
         self.max_risk_multiplier = max_risk_multiplier
@@ -45,6 +51,16 @@ class TradingRLEnv(gym.Env):
         self.low_prices = self.df['Low'].values if 'Low' in self.df.columns else self.close_prices
         self.atr_values = self.df['ATR'].values if 'ATR' in self.df.columns else self.close_prices * 0.005
         self.dist_sma_50 = self.df['Dist_SMA_50'].values if 'Dist_SMA_50' in self.df.columns else None
+        self.atr_ratio = self.df['ATR_Ratio'].values if 'ATR_Ratio' in self.df.columns else None
+        self.rsi = self.df['RSI'].values if 'RSI' in self.df.columns else None
+        
+        # Extract probabilities if available
+        if probabilities is not None and len(probabilities) > 0:
+            self.prob_long = probabilities[:, 0]
+            self.prob_short = probabilities[:, 1]
+        else:
+            self.prob_long = None
+            self.prob_short = None
         
         self.long_tp_mult = long_tp_mult
         self.long_sl_mult = long_sl_mult
@@ -60,9 +76,9 @@ class TradingRLEnv(gym.Env):
         # Continuous Action Space [-1.0, 1.0] for dynamic risk sizing
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
         
-        # Observation: emb_size + 1 (local_ratio) + 15 (last 5 trades) + 1 (direction) + 1 (unrealized_return)
+        # Observation: emb_size + 1 (local_ratio) + 15 (last 5 trades) + 2 (direction, unrealized) + 5 (probs + regimes) = emb_size + 23
         emb_size = embeddings.shape[1] if len(embeddings) > 0 else 256
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(emb_size + 18,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(emb_size + 23,), dtype=np.float32)
         
         self.reset()
         
@@ -90,6 +106,8 @@ class TradingRLEnv(gym.Env):
         self.entry_price = 0.0
         self.entry_atr = 0.0
         self.current_risk_multiplier = 0.0
+        self.trade_initial_risk = 1.0
+        self.trade_accumulated_swap = 0.0
         self.bars_held = 0
         
         self.current_sl_price = 0.0
@@ -144,8 +162,21 @@ class TradingRLEnv(gym.Env):
                 
         # Scale up unrealized return for network visibility
         unrealized_return *= 100.0
+        
+        # Probabilities & Market Regimes
+        p_long = float(self.prob_long[self.current_step]) if self.prob_long is not None else 0.5
+        p_short = float(self.prob_short[self.current_step]) if self.prob_short is not None else 0.5
+        macro_dist = float(self.dist_sma_50[self.current_step]) if self.dist_sma_50 is not None else 0.0
+        atr_ratio = float(self.atr_ratio[self.current_step]) if self.atr_ratio is not None else 1.0
+        rsi_val = float((self.rsi[self.current_step] - 50.0) / 50.0) if self.rsi is not None else 0.0
             
-        obs = np.concatenate([emb, [local_ratio], hist, [current_direction, unrealized_return]]).astype(np.float32)
+        obs = np.concatenate([
+            emb, 
+            [local_ratio], 
+            hist, 
+            [current_direction, unrealized_return],
+            [p_long, p_short, macro_dist, atr_ratio, rsi_val]
+        ]).astype(np.float32)
         obs = np.nan_to_num(obs, nan=0.0, posinf=1.0, neginf=-1.0)
         return obs
         
@@ -209,6 +240,8 @@ class TradingRLEnv(gym.Env):
         self.entry_price = fill_price
         self.entry_atr = atr
         self.current_risk_multiplier = risk_multiplier
+        self.trade_initial_risk = max(1.0, risk_amount)
+        self.trade_accumulated_swap = 0.0
         self.bars_held = 0
         self.total_trades += 1
         
@@ -257,26 +290,18 @@ class TradingRLEnv(gym.Env):
             self.bars_held += 1
             swap_cost = abs(self.position) * self.swap_per_bar
             self.capital -= swap_cost
+            self.trade_accumulated_swap += swap_cost
         
         # --- Check TP/SL using High/Low and fixed entry ATR ---
         if self.position != 0:
-            trade_closed, trade_reward, exit_price, exit_reason = self._check_tp_sl_intrabar(high, low)
+            trade_closed, _, exit_price, exit_reason = self._check_tp_sl_intrabar(high, low)
             
-            # --- Check Time Limit (72 Hours) ---
+            # --- Check Time Limit (96 Hours) ---
             if not trade_closed and self.bars_held >= self.max_wait_bars:
                 trade_closed = True
                 exit_price = price
                 exit_reason = 0  # Timeout
                 self.timeout_trades += 1
-                
-                # Proportional timeout reward based on distance to SL/TP
-                sl_mult = self.long_sl_mult if self.position > 0 else self.short_sl_mult
-                denom = (self.entry_atr * sl_mult) + 1e-8
-                if self.position > 0:
-                    pnl_ratio = (exit_price - self.entry_price) / denom
-                else:
-                    pnl_ratio = (self.entry_price - exit_price) / denom
-                trade_reward = float(np.clip(pnl_ratio, -1.0, 1.0)) * self.current_risk_multiplier
                 
             if trade_closed:
                 if exit_reason == 1:
@@ -287,7 +312,10 @@ class TradingRLEnv(gym.Env):
                     self.cooldown_remaining = self.cooldown_bars
                     self.last_sl_direction = current_direction
                     
-                self._close_position(exit_price)
+                gross_pnl = self._close_position(exit_price)
+                net_pnl = gross_pnl - self.trade_accumulated_swap
+                # Realized risk-normalized net PnL reward
+                trade_reward = float(np.clip(net_pnl / self.trade_initial_risk, -3.0, 3.0))
                     
         if trade_closed:
             last_dir = 1.0 if current_direction > 0 else 2.0
@@ -320,9 +348,19 @@ class TradingRLEnv(gym.Env):
                     elif desired_direction < 0 and macro_dist > 0.5:
                         trend_confirmed = False  # Avoid shorts in strong macro uptrend
                 
-                if is_cooled_down and trend_confirmed:
+                # Check 3: Backbone Probability Gate
+                prob_confirmed = True
+                if self.prob_long is not None and self.prob_short is not None:
+                    p_l = self.prob_long[self.current_step]
+                    p_s = self.prob_short[self.current_step]
+                    if desired_direction > 0 and (p_l < self.min_confidence or p_l <= p_s):
+                        prob_confirmed = False
+                    elif desired_direction < 0 and (p_s < self.min_confidence or p_s <= p_l):
+                        prob_confirmed = False
+                
+                if is_cooled_down and trend_confirmed and prob_confirmed:
                     target_direction = desired_direction
-                    conviction = (abs(raw_action) - self.deadzone) / (1.0 - self.deadzone)
+                    conviction = (abs(raw_action) - self.deadzone) / (1.0 - self.deadzone + 1e-8)
                     conviction = float(np.clip(conviction, 0.0, 1.0))
                     risk_multiplier = 1.0 + conviction * (self.max_risk_multiplier - 1.0)
                     self._open_position(price, atr, target_direction, risk_multiplier)
@@ -342,10 +380,9 @@ class TradingRLEnv(gym.Env):
         self.portfolio_value = self.capital + (self.position * (price - self.entry_price) if self.position != 0 else 0)
         
         # --- Reward Calculation based on reward_mode ---
-        if self.reward_mode == 'asymmetric_rr':
-            # Clean realized risk-reward upon trade exit, zero upfront entry penalty
+        if self.reward_mode in ('asymmetric_rr', 'net_rr'):
+            # Realized risk-normalized net PnL (deducting spread, slippage, and swap)
             reward = trade_reward
-            # Zero flat penalty: sitting flat yields 0.0 reward, encouraging high-conviction patience
             if self.position == 0 and not trade_closed and self.flat_penalty > 0:
                 reward -= self.flat_penalty
                 

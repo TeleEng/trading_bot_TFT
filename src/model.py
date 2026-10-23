@@ -79,23 +79,9 @@ class PositionalEncoding(nn.Module):
     def forward(self, x):
         return x + self.pe[:x.size(1), :]
 
-class InstanceNormalization1D(nn.Module):
-    def __init__(self, eps=1e-5):
-        super(InstanceNormalization1D, self).__init__()
-        self.eps = eps
-
-    def forward(self, x):
-        mean = torch.mean(x, dim=1, keepdim=True)
-        std = torch.std(x, dim=1, keepdim=True, unbiased=False)
-        # Prevent dividing by 0 or amplifying tiny noise
-        std = torch.where(std > 1e-4, std, torch.ones_like(std))
-        return (x - mean) / std
-
-
 class MultiTimeframeTFT(nn.Module):
     def __init__(self, input_size, hidden_size, num_layers, cat_indices=None, num_over_clusters=6, dropout=0.3, num_classes=3):
         super(MultiTimeframeTFT, self).__init__()
-        self.norm = InstanceNormalization1D()
         
         self.cat_indices = cat_indices if cat_indices is not None else []
         self.cont_indices = [i for i in range(input_size) if i not in self.cat_indices]
@@ -105,8 +91,10 @@ class MultiTimeframeTFT(nn.Module):
         self.hour_embedding = nn.Embedding(24, hidden_size) if len(self.cat_indices) > 0 else None
         self.day_embedding = nn.Embedding(7, hidden_size) if len(self.cat_indices) > 1 else None
         
-        # Continuous Feature Projection
+        # Continuous Feature Projection + LayerNorm across embedding dimension
+        # Note: LayerNorm across hidden_size preserves temporal trends and levels across candles
         self.cont_proj = nn.Linear(cont_size, hidden_size)
+        self.cont_norm = nn.LayerNorm(hidden_size)
         
         # VSN expects concatenated features. If we have 2 cats and 1 cont proj, that's 3 * hidden_size input.
         # But for simplicity, we can just sum them up or process them. Let's process continuous directly.
@@ -168,12 +156,12 @@ class MultiTimeframeTFT(nn.Module):
             cont_x = x[:, :, self.cont_indices]
             cat_x = x[:, :, self.cat_indices].long()
             
-            x_emb = self.cont_proj(self.norm(cont_x))
+            x_emb = self.cont_norm(self.cont_proj(cont_x))
             x_emb += self.hour_embedding(cat_x[:, :, 0])
             if len(self.cat_indices) > 1:
                 x_emb += self.day_embedding(cat_x[:, :, 1])
         else:
-            x_emb = self.cont_proj(self.norm(x))
+            x_emb = self.cont_norm(self.cont_proj(x))
             
         x_grn = grn_layer(x_emb)
         lstm_out, _ = lstm_layer(x_grn)
@@ -353,6 +341,7 @@ class PricePredictor:
             self.model = nn.DataParallel(self.model)
 
         optimizer = optim.Adam(self.model.parameters(), lr=1e-3, weight_decay=1e-4)
+        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
         
         train_dataset = torch.utils.data.TensorDataset(X1_t, X4_t, X1d_t, X1w_t, y_t)
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
@@ -367,11 +356,10 @@ class PricePredictor:
         label_counts = torch.bincount(y_t, minlength=self.num_classes).float()
         class_weights = (1.0 / (label_counts + 1e-6))
         class_weights = class_weights / class_weights.sum() * float(self.num_classes)  # normalize
-
         class_weights = class_weights.to(self.device)
-        # Use Focal Loss with alpha weighting for extreme imbalance
-        alpha = class_weights[1].item() / (class_weights[0].item() + class_weights[1].item()) if self.num_classes == 2 else 0.25
-        ce_criterion = FocalLoss(alpha=alpha, gamma=2.0, reduction='mean')
+        
+        # Standard CrossEntropyLoss with class weights and label smoothing provides non-vanishing gradients
+        ce_criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
         
         print(f"Class weights: {class_weights.cpu().numpy()}")
         print("Starting MTF Supervised Contrastive + Classification Training...")
@@ -380,6 +368,9 @@ class PricePredictor:
         patience_counter = 0
         best_model_state = None
 
+        if active_augs is None:
+            active_augs = ['jitter', 'scaling', 'skew']
+
         for epoch in range(epochs):
             self.model.train()
             total_loss = 0
@@ -387,30 +378,33 @@ class PricePredictor:
             for b_x1, b_x4, b_x1d, b_x1w, b_y in train_loader:
                 optimizer.zero_grad()
                 
-                # Augmentations on 1h (we can leave 4h, 1d, 1w unaugmented for stability)
+                # 1. Clean forward pass for primary classification guidance
+                _, z_clean, _, logits_clean = self.model(b_x1, b_x4, b_x1d, b_x1w)
+                loss_ce = ce_criterion(logits_clean, b_y)
+                
+                # 2. Augmented forward passes for auxiliary contrastive learning
                 x1_i, x4_i, x1d_i, x1w_i = self.augmenter.augment(b_x1, active_augs=active_augs), b_x4, b_x1d, b_x1w
                 x1_j, x4_j, x1d_j, x1w_j = self.augmenter.augment(b_x1, active_augs=active_augs), b_x4, b_x1d, b_x1w
                 
-                # Restore original categorical features (augmenter corrupts integers with float noise)
+                # Restore original categorical features
                 if len(cat_indices) > 0:
                     x1_i[:, :, cat_indices] = b_x1[:, :, cat_indices]
                     x1_j[:, :, cat_indices] = b_x1[:, :, cat_indices]
                 
-                _, z_i, c_i, logits_i = self.model(x1_i, x4_i, x1d_i, x1w_i)
-                _, z_j, c_j, logits_j = self.model(x1_j, x4_j, x1d_j, x1w_j)
+                _, z_i, c_i, _ = self.model(x1_i, x4_i, x1d_i, x1w_i)
+                _, z_j, c_j, _ = self.model(x1_j, x4_j, x1d_j, x1w_j)
                 
-                # SupCon + Cluster loss
                 loss_contrastive = criterion(z_i, z_j, c_i, c_j, b_y)
                 
-                # Classification loss (average over both views)
-                loss_ce = (ce_criterion(logits_i, b_y) + ce_criterion(logits_j, b_y)) / 2.0
-                
-                # Balanced Multi-Task Loss: Scale CE by 30x so directional prediction guides representation
-                loss = loss_contrastive + 30.0 * loss_ce
+                # Combined Multi-Task Loss: Primary CE + 0.1 * Contrastive Regularizer
+                loss = loss_ce + 0.1 * loss_contrastive
                 loss.backward()
+                nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=2.0)
                 optimizer.step()
                 total_loss += loss.item()
                 total_ce_loss += loss_ce.item()
+                
+            scheduler.step()
                 
             avg_train_loss = total_loss / len(train_loader)
             avg_ce_loss = total_ce_loss / len(train_loader)

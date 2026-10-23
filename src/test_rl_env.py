@@ -18,28 +18,33 @@ class TestTradingRLEnv(unittest.TestCase):
             'Low': [1.0990] * 10,
             'ATR': [0.0020] * 10,
             'Dist_SMA_50': [0.1] * 10,  # neutral/mildly bullish
+            'ATR_Ratio': [1.0] * 10,
+            'RSI': [55.0] * 10
         }
         self.df = pd.DataFrame(data)
         self.embeddings = np.zeros((10, 10))  # 10 steps, emb size 10
+        self.probs = np.ones((10, 2)) * 0.55  # 10 steps, high confidence
         
         self.env = TradingRLEnv(
             embeddings=self.embeddings,
             df=self.df,
-            long_tp_mult=1.5,
-            long_sl_mult=1.0,
-            short_tp_mult=1.5,
-            short_sl_mult=1.0,
+            probabilities=self.probs,
+            long_tp_mult=3.0,
+            long_sl_mult=2.0,
+            short_tp_mult=3.0,
+            short_sl_mult=2.0,
             initial_capital=10000,
             spread_pips=1.0,
             slippage_pips=0.0,  # deterministic fill
             swap_pips_per_day=0.5,
-            deadzone=0.10,
-            reward_mode='asymmetric_rr',
+            deadzone=0.20,
+            min_confidence=0.50,
+            reward_mode='net_rr',
             flat_penalty=0.0,
             max_risk_multiplier=1.5,
             cooldown_bars=4,
             trend_filter=True,
-            max_wait_bars=72
+            max_wait_bars=96
         )
         self.env.reset()
 
@@ -51,21 +56,21 @@ class TestTradingRLEnv(unittest.TestCase):
 
     def test_position_sizing(self):
         # Risk amount = 10000 * 0.01 * 1.5 = 150
-        # Risk per unit = ATR (0.0020) * 1.0 = 0.0020
-        # Ideal qty = 150 / 0.0020 = 75000.0
+        # Risk per unit = ATR (0.0020) * 2.0 = 0.0040
+        # Ideal qty = 150 / 0.0040 = 37500.0
         self.env._open_position(1.1000, 0.0020, 1, 1.5)
-        self.assertAlmostEqual(self.env.position, 75000.0, places=2)
+        self.assertAlmostEqual(self.env.position, 37500.0, places=2)
         
     def test_overnight_swap_deduction(self):
         self.env._open_position(1.1000, 0.0020, 1, 1.5)
         initial_cap = self.env.capital
         self.env.step([0.0])  # hold for 1 bar
-        expected_cap = initial_cap - (75000.0 * 2.083333e-6)
+        expected_cap = initial_cap - (37500.0 * 2.083333e-6)
         self.assertAlmostEqual(self.env.capital, expected_cap, places=2)
         
     def test_deadzone_flat(self):
-        # Action inside deadzone [-0.10, 0.10] must result in 0 trades / flat
-        obs, reward, done, trunc, info = self.env.step([0.05])
+        # Action inside deadzone [-0.20, 0.20] must result in 0 trades / flat
+        obs, reward, done, trunc, info = self.env.step([0.10])
         self.assertEqual(self.env.position, 0.0)
         self.assertEqual(self.env.total_trades, 0)
         # With zero flat penalty, sitting flat rewards 0.0
@@ -73,7 +78,7 @@ class TestTradingRLEnv(unittest.TestCase):
 
     def test_zero_upfront_penalty(self):
         # Opening a trade should NOT hit the agent with an upfront penalty
-        obs, reward, done, trunc, info = self.env.step([0.55])
+        obs, reward, done, trunc, info = self.env.step([0.60])
         self.assertTrue(self.env.position > 0)
         self.assertEqual(self.env.total_trades, 1)
         self.assertEqual(reward, 0.0)
