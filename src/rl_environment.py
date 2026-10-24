@@ -160,6 +160,7 @@ class TradingRLEnv(gym.Env):
         self.hold_bars_wins = []
         self.hold_bars_losses = []
         self.risk_mult_history = []
+        self.trade_r_history = []
         
         self.exit_tp_count = 0
         self.exit_tp_pnl = 0.0
@@ -456,8 +457,10 @@ class TradingRLEnv(gym.Env):
                     self.cooldown_remaining = self.cooldown_bars
                     self.last_sl_direction = current_direction
                     
-                # Realized risk-normalized net PnL reward
-                trade_reward = float(np.clip(net_pnl / self.trade_initial_risk, -3.0, 3.0))
+                # Realized risk-normalized net PnL reward and R-tracking
+                r_mult = float(net_pnl / max(1.0, self.trade_initial_risk))
+                self.trade_r_history.append(r_mult)
+                trade_reward = float(np.clip(r_mult, -3.0, 3.0))
                     
         if trade_closed:
             last_dir = 1.0 if current_direction > 0 else 2.0
@@ -641,4 +644,15 @@ class TradingRLEnv(gym.Env):
         print("  [COST & DURATION ATTRIBUTION]")
         print(f"    ├─ Gross PnL: ${self.total_gross_pnl:+.2f} | Friction: -${self.total_friction:.2f} | Net PnL: ${self.total_net_pnl:+.2f} (Cost Drag: {cost_drag_pct:.1f}%)")
         print(f"    └─ Avg Hold (Wins): {avg_hold_win:.1f}h | Avg Hold (Losses): {avg_hold_loss:.1f}h | Avg Risk Multiplier: {avg_risk_mult:.2f}x")
+
+        print("  [HONEST UNCOMPOUNDED EXPECTANCY]")
+        if len(self.trade_r_history) > 0:
+            mean_r = float(np.mean(self.trade_r_history))
+            std_r = float(np.std(self.trade_r_history))
+            t_stat = float((mean_r / (std_r + 1e-8)) * np.sqrt(len(self.trade_r_history)))
+            print(f"    ├─ Expectancy per Trade: {mean_r:+.3f} R | Std: {std_r:.3f} R | t-stat: {t_stat:.2f} (N={len(self.trade_r_history)})")
+        else:
+            print(f"    ├─ Expectancy per Trade: +0.000 R | Std: 0.000 R | t-stat: 0.00 (N=0)")
+        print(f"    ├─ Disaggregated Exits: Full TP: {(self.exit_tp_count/total*100):.1f}% | BE Scratch: {(self.exit_be_count/total*100):.1f}% | Full SL: {(self.exit_sl_count/total*100):.1f}% | Timeout: {(self.exit_timeout_count/total*100):.1f}%")
+        print(f"    └─ True Win Rate (excl BE): {(self.exit_tp_count/total*100):.1f}% (TPs only vs {(self.winning_trades/total*100):.1f}% nominal wins)")
         print("  " + "="*68 + "\n")

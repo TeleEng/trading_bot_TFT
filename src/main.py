@@ -15,6 +15,8 @@ import numpy as np
 base_dir = Path(__file__).resolve().parent.parent
 sys.path.append(str(base_dir / "src"))
 
+import random
+import torch
 from data_downloader import download_histdata, TICKERS, START_YEAR, END_YEAR, DATA_PATH
 from preprocess import process_all_data, OUTPUT_PATH
 from model import PricePredictor
@@ -23,10 +25,24 @@ from backtest import Backtester
 from performance import PerformanceMetrics
 from rl_environment import TradingRLEnv
 from rl_grid_search import run_grid_search
+from baselines import run_deterministic_baseline
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.monitor import Monitor
+
+
+def seed_everything(seed=42):
+    """Sets global seeds for reproducibility across Python, NumPy, and PyTorch."""
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(seed)
+        torch.cuda.manual_seed_all(seed)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
 
 
 def evaluate_probability_calibration(df, probabilities, split_name="Test Split"):
@@ -87,6 +103,7 @@ def parse_args():
 
 def main():
     args = parse_args()
+    seed_everything(seed=42)
     
     print("="*60)
     print("TRADING BOT - DUAL-BRAIN TFT + PPO PIPELINE")
@@ -290,6 +307,8 @@ def main():
         deadzone=0.25,
         min_confidence=0.50,
         min_edge=0.01,
+        use_ev_gate=True,
+        min_ev_r=0.0,
         breakeven_sl=True,
         be_trigger_mult=1.2,
         volatility_filter=True,
@@ -309,6 +328,8 @@ def main():
         deadzone=0.25,
         min_confidence=0.50,
         min_edge=0.01,
+        use_ev_gate=True,
+        min_ev_r=0.0,
         breakeven_sl=True,
         be_trigger_mult=1.2,
         volatility_filter=True,
@@ -333,6 +354,9 @@ def main():
         render=False
     )
     
+    rl_device = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"PPO Policy training device: {rl_device}")
+
     # Configure PPO with non-zero entropy coefficient to guarantee exploration
     ppo_model = PPO(
         "MlpPolicy",
@@ -345,7 +369,7 @@ def main():
         n_epochs=10,
         clip_range=0.2,
         verbose=0,
-        device="cpu"
+        device=rl_device
     )
     
     print(f"Training PPO for {args.timesteps:,} steps...")
@@ -368,6 +392,8 @@ def main():
         deadzone=0.25,
         min_confidence=0.50,
         min_edge=0.01,
+        use_ev_gate=True,
+        min_ev_r=0.0,
         breakeven_sl=True,
         be_trigger_mult=1.2,
         volatility_filter=True,
@@ -406,6 +432,9 @@ def main():
         backtest_results,
         initial_capital=10000
     )
+    print("\n" + "="*50)
+    print("CHAMPION PPO AGENT PERFORMANCE (HELD-OUT TEST)")
+    print("="*50)
     PerformanceMetrics.print_report(metrics)
     test_env.print_funnel_report()
     test_env.print_exit_and_cost_report()
@@ -414,6 +443,15 @@ def main():
     viz_path = results_dir / "backtest_results.png"
     PerformanceMetrics.plot_results(backtest_results, save_path=str(viz_path))
     print(f"Visualization saved to {viz_path}")
+
+    # Phase 6: Benchmark against Deterministic Rule Baseline
+    print("\n[Phase 6] Running Deterministic Rule-Based Baseline Benchmark...")
+    run_deterministic_baseline(
+        test_embeddings, test_df_aligned,
+        probabilities=test_probabilities,
+        be_trigger_mult=1.2,
+        split_name="Held-Out Test Split"
+    )
 
     print("\n" + "="*60)
     print("PIPELINE COMPLETE!")

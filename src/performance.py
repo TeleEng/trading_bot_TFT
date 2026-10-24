@@ -14,8 +14,15 @@ class PerformanceMetrics:
                 'Sharpe Ratio': 0.0,
                 'Max Drawdown (%)': 0.0,
                 'Win Rate (%)': 0.0,
+                'Profit Factor': 0.0,
                 'Final Value': initial_capital,
                 'Total Trades': 0,
+                'Expectancy (R)': 0.0,
+                'Expectancy ($)': 0.0,
+                'Trade t-stat': 0.0,
+                'Full TP Rate (%)': 0.0,
+                'BE Scratch Rate (%)': 0.0,
+                'Full SL Rate (%)': 0.0,
             }
 
         if 'portfolio_value' not in backtest_results.columns:
@@ -24,8 +31,15 @@ class PerformanceMetrics:
                 'Sharpe Ratio': 0.0,
                 'Max Drawdown (%)': 0.0,
                 'Win Rate (%)': 0.0,
+                'Profit Factor': 0.0,
                 'Final Value': initial_capital,
                 'Total Trades': 0,
+                'Expectancy (R)': 0.0,
+                'Expectancy ($)': 0.0,
+                'Trade t-stat': 0.0,
+                'Full TP Rate (%)': 0.0,
+                'BE Scratch Rate (%)': 0.0,
+                'Full SL Rate (%)': 0.0,
             }
 
         portfolio_values = backtest_results['portfolio_value'].values
@@ -79,6 +93,21 @@ class PerformanceMetrics:
         else:
             profit_factor = 0.0
 
+        # Honest Expectancy, t-stat & Disaggregated Exits
+        expectancy_usd = float(np.mean(trades)) if total_trades > 0 else 0.0
+        trade_std_usd = float(np.std(trades)) if total_trades > 0 else 0.0
+        trade_risk_usd = initial_capital * 0.01  # 1R base risk (1% initial capital)
+        expectancy_r = float(expectancy_usd / trade_risk_usd) if trade_risk_usd > 0 else 0.0
+        trade_t_stat = float((expectancy_usd / (trade_std_usd + 1e-10)) * np.sqrt(total_trades)) if total_trades > 0 else 0.0
+        
+        # Scratch detection (exits within +/- 0.2R of breakeven)
+        scratch_trades = sum(1 for t in trades if abs(t) <= (0.2 * trade_risk_usd))
+        scratch_rate = (scratch_trades / total_trades * 100.0) if total_trades > 0 else 0.0
+        full_tp_trades = sum(1 for t in trades if t > (0.2 * trade_risk_usd))
+        full_tp_rate = (full_tp_trades / total_trades * 100.0) if total_trades > 0 else 0.0
+        full_sl_trades = sum(1 for t in trades if t < -(0.2 * trade_risk_usd))
+        full_sl_rate = (full_sl_trades / total_trades * 100.0) if total_trades > 0 else 0.0
+
         return {
             'Total Return (%)': total_return * 100,
             'Sharpe Ratio': sharpe_ratio,
@@ -87,6 +116,12 @@ class PerformanceMetrics:
             'Profit Factor': profit_factor,
             'Final Value': portfolio_values[-1],
             'Total Trades': total_trades,
+            'Expectancy (R)': expectancy_r,
+            'Expectancy ($)': expectancy_usd,
+            'Trade t-stat': trade_t_stat,
+            'Full TP Rate (%)': full_tp_rate,
+            'BE Scratch Rate (%)': scratch_rate,
+            'Full SL Rate (%)': full_sl_rate,
         }
 
     @staticmethod

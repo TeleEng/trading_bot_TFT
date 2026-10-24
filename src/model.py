@@ -8,10 +8,6 @@ import seaborn as sns
 from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score
 import os
 from pathlib import Path
-
-from augment import TimeSeriesAugmenter
-from loss import SupervisedContrastiveClusteringLoss, FocalLoss
-from pytorch_enn import PyTorchENN
 import gc
 
 
@@ -80,7 +76,7 @@ class PositionalEncoding(nn.Module):
         return x + self.pe[:x.size(1), :]
 
 class MultiTimeframeTFT(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, cat_indices=None, num_over_clusters=6, dropout=0.35, num_classes=3):
+    def __init__(self, input_size, hidden_size, num_layers, cat_indices=None, dropout=0.35, num_classes=2):
         super(MultiTimeframeTFT, self).__init__()
         
         self.cat_indices = cat_indices if cat_indices is not None else []
@@ -92,12 +88,8 @@ class MultiTimeframeTFT(nn.Module):
         self.day_embedding = nn.Embedding(7, hidden_size) if len(self.cat_indices) > 1 else None
         
         # Continuous Feature Projection + LayerNorm across embedding dimension
-        # Note: LayerNorm across hidden_size preserves temporal trends and levels across candles
         self.cont_proj = nn.Linear(cont_size, hidden_size)
         self.cont_norm = nn.LayerNorm(hidden_size)
-        
-        # VSN expects concatenated features. If we have 2 cats and 1 cont proj, that's 3 * hidden_size input.
-        # But for simplicity, we can just sum them up or process them. Let's process continuous directly.
         
         # GRN Encoders for each branch
         self.grn_1h = GRN(hidden_size, hidden_size, dropout=dropout)
@@ -130,25 +122,7 @@ class MultiTimeframeTFT(nn.Module):
         # Fusion Layer
         self.fusion = GRN(hidden_size * 4, hidden_size, dropout=dropout)
         
-        # Instance Head for InfoNCE
-        self.instance_head = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size, bias=False),
-            nn.BatchNorm1d(hidden_size),
-            nn.ReLU(inplace=True),
-            nn.Linear(hidden_size, 32)
-        )
-        
-        # Over-Cluster Head
-        self.num_over_clusters = num_over_clusters
-        self.over_cluster_head = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size, bias=False),
-            nn.BatchNorm1d(hidden_size),
-            nn.ReLU(inplace=True),
-            nn.Linear(hidden_size, num_over_clusters),
-            nn.Softmax(dim=-1)
-        )
-        
-        # Classification Head
+        # Supervised Classification Head
         self.classification_head = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.ReLU(inplace=True),
@@ -200,12 +174,8 @@ class MultiTimeframeTFT(nn.Module):
         flattened_h = stacked_h.view(stacked_h.size(0), -1)
         
         h = self.fusion(flattened_h)
-        
-        z = self.instance_head(h)
-        c_over = self.over_cluster_head(h)
         logits = self.classification_head(h)
-        
-        return h, z, c_over, logits
+        return h, logits
 
 class ProbabilityCalibrator:
     """
@@ -438,7 +408,7 @@ class PricePredictor:
                 optimizer.zero_grad()
                 
                 # Direct clean supervised forward pass
-                _, _, _, logits = self.model(b_x1, b_x4, b_x1d, b_x1w)
+                _, logits = self.model(b_x1, b_x4, b_x1d, b_x1w)
                 loss = ce_criterion(logits, b_y)
                 
                 loss.backward()
@@ -460,7 +430,7 @@ class PricePredictor:
             val_emb_stds = []
             with torch.no_grad():
                 for b_x1, b_x4, b_x1d, b_x1w, b_y in val_loader:
-                    h_val, _, _, logits_val = self.model(b_x1, b_x4, b_x1d, b_x1w)
+                    h_val, logits_val = self.model(b_x1, b_x4, b_x1d, b_x1w)
                     loss_ce = ce_criterion(logits_val, b_y)
                     total_val_loss += loss_ce.item()
                     
@@ -507,66 +477,6 @@ class PricePredictor:
         print(f"Final Model - Train Loss: {avg_train_loss:.4f} | Val F1: {best_val_f1:.4f}")
         return avg_train_loss, best_val_f1
 
-    def set_voting_map(self, voting_map):
-        self.voting_map = voting_map
-        
-    def _apply_voting(self, c_probs):
-        # c_probs is (N, 6)
-        # voting_map maps micro-cluster idx (0-5) to Triple Barrier Label (0=Flat, 1=Up, 2=Down)
-        out_probs = np.zeros((len(c_probs), 3))
-        for k in range(6):
-            target_class = self.voting_map.get(k, 0)
-            out_probs[:, target_class] += c_probs[:, k]
-        return out_probs
-
-    def predict(self, dfs):
-        self.model.eval()
-        df_1h, df_4h, df_1d, df_1w = dfs
-        result = self.create_sequences(df_1h, df_4h, df_1d, df_1w)
-        X1, X4, X1d, X1w = result[0], result[1], result[2], result[3]
-        
-        if len(X1) == 0:
-            return 0.0, 0.0, 0.0
-            
-        X1 = torch.FloatTensor(X1[-1:]).to(self.device)
-        X4 = torch.FloatTensor(X4[-1:]).to(self.device)
-        X1d = torch.FloatTensor(X1d[-1:]).to(self.device)
-        X1w = torch.FloatTensor(X1w[-1:]).to(self.device)
-        
-        with torch.no_grad():
-            _, _, c_over, _ = self.model(X1, X4, X1d, X1w)
-            c_probs = c_over.cpu().numpy()
-            
-        out_probs = self._apply_voting(c_probs)
-        return out_probs[0, 0], out_probs[0, 1], out_probs[0, 2]
-
-    def predict_batch(self, dfs, batch_size=512):
-        """Returns (N, 6) raw micro-cluster probs for building the voting map."""
-        self.model.eval()
-        df_1h, df_4h, df_1d, df_1w = dfs
-        result = self.create_sequences(df_1h, df_4h, df_1d, df_1w)
-        X1, X4, X1d, X1w = result[0], result[1], result[2], result[3]
-        
-        if len(X1) == 0:
-            return np.array([])
-            
-        X1 = torch.FloatTensor(X1).to(self.device)
-        X4 = torch.FloatTensor(X4).to(self.device)
-        X1d = torch.FloatTensor(X1d).to(self.device)
-        X1w = torch.FloatTensor(X1w).to(self.device)
-        
-        dataset = torch.utils.data.TensorDataset(X1, X4, X1d, X1w)
-        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
-        
-        all_probs = []
-        with torch.no_grad():
-            for b_x1, b_x4, b_x1d, b_x1w in loader:
-                _, _, c_over, _ = self.model(b_x1, b_x4, b_x1d, b_x1w)
-                all_probs.append(c_over.cpu().numpy())
-                
-        c_probs = np.concatenate(all_probs, axis=0)
-        return c_probs
-        
     def predict_batch_embeddings(self, dfs, batch_size=512):
         """Returns (N, hidden_size) fused embeddings."""
         self.model.eval()
@@ -588,13 +498,13 @@ class PricePredictor:
         all_h = []
         with torch.no_grad():
             for b_x1, b_x4, b_x1d, b_x1w in loader:
-                h, _, _, _ = self.model(b_x1, b_x4, b_x1d, b_x1w)
+                h, _ = self.model(b_x1, b_x4, b_x1d, b_x1w)
                 all_h.append(h.cpu().numpy())
                 
         return np.concatenate(all_h, axis=0)
         
     def predict_batch_classified(self, dfs, batch_size=512):
-        """Returns (N, 3) softmax probabilities from the classification head."""
+        """Returns (N, num_classes) softmax probabilities from the classification head."""
         self.model.eval()
         df_1h, df_4h, df_1d, df_1w = dfs
         result = self.create_sequences(df_1h, df_4h, df_1d, df_1w)
@@ -614,7 +524,7 @@ class PricePredictor:
         all_probs = []
         with torch.no_grad():
             for b_x1, b_x4, b_x1d, b_x1w in loader:
-                _, _, _, logits = self.model(b_x1, b_x4, b_x1d, b_x1w)
+                _, logits = self.model(b_x1, b_x4, b_x1d, b_x1w)
                 probs = torch.softmax(logits, dim=1)
                 all_probs.append(probs.cpu().numpy())
                 
@@ -636,16 +546,6 @@ class PricePredictor:
             cal_p1 = self.calibrator.predict(raw_probs)
             return np.column_stack([1.0 - cal_p1, cal_p1])
         return self.predict_batch_classified(dfs, batch_size)
-
-    def predict_batch_voted(self, dfs, batch_size=512):
-        """Returns (N, 3) probabilities based on cluster voting map."""
-        c_probs = self.predict_batch(dfs, batch_size)
-        return self._apply_voting(c_probs)
-
-    def get_over_cluster_weights(self):
-        """Helper to get weights even if model is wrapped in DataParallel"""
-        base_model = self.model.module if isinstance(self.model, nn.DataParallel) else self.model
-        return base_model.over_cluster_head[3].weight.data.cpu().numpy()
 
     def save(self, path):
         base_model = self.model.module if isinstance(self.model, nn.DataParallel) else self.model
