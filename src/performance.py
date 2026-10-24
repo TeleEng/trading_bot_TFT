@@ -69,11 +69,22 @@ class PerformanceMetrics:
         total_trades = len(trades)
         win_rate = winning_trades / total_trades if total_trades > 0 else 0
 
+        # Profit Factor: Gross Profits / Gross Losses
+        gross_profits = sum(t for t in trades if t > 0)
+        gross_losses = abs(sum(t for t in trades if t < 0))
+        if gross_losses > 0:
+            profit_factor = gross_profits / gross_losses
+        elif gross_profits > 0:
+            profit_factor = 99.0
+        else:
+            profit_factor = 0.0
+
         return {
             'Total Return (%)': total_return * 100,
             'Sharpe Ratio': sharpe_ratio,
             'Max Drawdown (%)': max_drawdown * 100,
             'Win Rate (%)': win_rate * 100,
+            'Profit Factor': profit_factor,
             'Final Value': portfolio_values[-1],
             'Total Trades': total_trades,
         }

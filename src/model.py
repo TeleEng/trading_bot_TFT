@@ -105,11 +105,16 @@ class MultiTimeframeTFT(nn.Module):
         self.grn_1d = GRN(hidden_size, hidden_size, dropout=dropout)
         self.grn_1w = GRN(hidden_size, hidden_size, dropout=dropout)
         
-        # LSTMs
+        # LSTMs with residual skip connections
         self.lstm_1h = nn.LSTM(hidden_size, hidden_size, num_layers, batch_first=True, dropout=dropout if num_layers > 1 else 0)
         self.lstm_4h = nn.LSTM(hidden_size, hidden_size, num_layers, batch_first=True, dropout=dropout if num_layers > 1 else 0)
         self.lstm_1d = nn.LSTM(hidden_size, hidden_size, num_layers, batch_first=True, dropout=dropout if num_layers > 1 else 0)
         self.lstm_1w = nn.LSTM(hidden_size, hidden_size, num_layers, batch_first=True, dropout=dropout if num_layers > 1 else 0)
+        
+        self.branch_norm_1h = nn.LayerNorm(hidden_size)
+        self.branch_norm_4h = nn.LayerNorm(hidden_size)
+        self.branch_norm_1d = nn.LayerNorm(hidden_size)
+        self.branch_norm_1w = nn.LayerNorm(hidden_size)
         
         # Positional Encoding
         self.pos_encoder = PositionalEncoding(hidden_size)
@@ -151,7 +156,7 @@ class MultiTimeframeTFT(nn.Module):
             nn.Linear(hidden_size // 2, num_classes)
         )
 
-    def process_branch(self, x, grn_layer, lstm_layer):
+    def process_branch(self, x, grn_layer, lstm_layer, norm_layer):
         if len(self.cat_indices) > 0:
             cont_x = x[:, :, self.cont_indices]
             cat_x = x[:, :, self.cat_indices].long()
@@ -165,13 +170,13 @@ class MultiTimeframeTFT(nn.Module):
             
         x_grn = grn_layer(x_emb)
         lstm_out, _ = lstm_layer(x_grn)
-        return lstm_out
+        return norm_layer(x_grn + lstm_out)
 
     def forward(self, x_1h, x_4h, x_1d, x_1w):
-        out_1h = self.process_branch(x_1h, self.grn_1h, self.lstm_1h)
-        out_4h = self.process_branch(x_4h, self.grn_4h, self.lstm_4h)
-        out_1d = self.process_branch(x_1d, self.grn_1d, self.lstm_1d)
-        out_1w = self.process_branch(x_1w, self.grn_1w, self.lstm_1w)
+        out_1h = self.process_branch(x_1h, self.grn_1h, self.lstm_1h, self.branch_norm_1h)
+        out_4h = self.process_branch(x_4h, self.grn_4h, self.lstm_4h, self.branch_norm_4h)
+        out_1d = self.process_branch(x_1d, self.grn_1d, self.lstm_1d, self.branch_norm_1d)
+        out_1w = self.process_branch(x_1w, self.grn_1w, self.lstm_1w, self.branch_norm_1w)
         
         # Positional Encoding + Attention
         out_1h_pos = self.pos_encoder(out_1h)
@@ -203,7 +208,7 @@ class MultiTimeframeTFT(nn.Module):
         return h, z, c_over, logits
 
 class PricePredictor:
-    def __init__(self, input_chunk_length=52, hidden_size=128, num_layers=3, num_classes=2):
+    def __init__(self, input_chunk_length=52, hidden_size=128, num_layers=2, num_classes=2):
         self.input_chunk_length = input_chunk_length
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -216,14 +221,65 @@ class PricePredictor:
         self.copy = copy
         self.history = {'train_loss': [], 'val_loss': []}
         self.augmenter = TimeSeriesAugmenter(self.device)
+        self.mean_1h = None; self.std_1h = None
+        self.mean_4h = None; self.std_4h = None
+        self.mean_1d = None; self.std_1d = None
+        self.mean_1w = None; self.std_1w = None
 
-    def create_sequences(self, df_1h, df_4h, df_1d, df_1w, clean_noise=False, target_col='target_long'):
+    def create_sequences(self, df_1h, df_4h, df_1d, df_1w, fit_scaler=False, target_col='target_long'):
         drop_cols = ['target_long', 'target_short', 'target', 'Open', 'High', 'Low', 'Close', 'Volume']
-        features_1h = df_1h.drop(columns=drop_cols, errors='ignore').values
-        features_4h = df_4h.drop(columns=drop_cols, errors='ignore').values
-        features_1d = df_1d.drop(columns=drop_cols, errors='ignore').values
-        features_1w = df_1w.drop(columns=drop_cols, errors='ignore').values
+        raw_1h = df_1h.drop(columns=drop_cols, errors='ignore')
+        raw_4h = df_4h.drop(columns=drop_cols, errors='ignore')
+        raw_1d = df_1d.drop(columns=drop_cols, errors='ignore')
+        raw_1w = df_1w.drop(columns=drop_cols, errors='ignore')
         
+        cat_cols = ['Hour', 'DayOfWeek']
+        features_1h = raw_1h.values.astype(np.float32)
+        features_4h = raw_4h.values.astype(np.float32)
+        features_1d = raw_1d.values.astype(np.float32)
+        features_1w = raw_1w.values.astype(np.float32)
+        
+        # Fit per-feature StandardScaler on training split to eliminate feature-magnitude disparity
+        if fit_scaler:
+            self.mean_1h = np.nanmean(features_1h, axis=0, keepdims=True)
+            self.std_1h = np.nanstd(features_1h, axis=0, keepdims=True)
+            self.std_1h = np.where(self.std_1h > 1e-4, self.std_1h, 1.0)
+            
+            self.mean_4h = np.nanmean(features_4h, axis=0, keepdims=True)
+            self.std_4h = np.nanstd(features_4h, axis=0, keepdims=True)
+            self.std_4h = np.where(self.std_4h > 1e-4, self.std_4h, 1.0)
+            
+            self.mean_1d = np.nanmean(features_1d, axis=0, keepdims=True)
+            self.std_1d = np.nanstd(features_1d, axis=0, keepdims=True)
+            self.std_1d = np.where(self.std_1d > 1e-4, self.std_1d, 1.0)
+            
+            self.mean_1w = np.nanmean(features_1w, axis=0, keepdims=True)
+            self.std_1w = np.nanstd(features_1w, axis=0, keepdims=True)
+            self.std_1w = np.where(self.std_1w > 1e-4, self.std_1w, 1.0)
+            
+        if self.mean_1h is not None:
+            cat_idx_1h = [raw_1h.columns.get_loc(c) for c in cat_cols if c in raw_1h.columns]
+            cat_idx_4h = [raw_4h.columns.get_loc(c) for c in cat_cols if c in raw_4h.columns]
+            cat_idx_1d = [raw_1d.columns.get_loc(c) for c in cat_cols if c in raw_1d.columns]
+            cat_idx_1w = [raw_1w.columns.get_loc(c) for c in cat_cols if c in raw_1w.columns]
+            
+            f_1h = (features_1h - self.mean_1h) / self.std_1h
+            f_4h = (features_4h - self.mean_4h) / self.std_4h
+            f_1d = (features_1d - self.mean_1d) / self.std_1d
+            f_1w = (features_1w - self.mean_1w) / self.std_1w
+            
+            # Preserve raw integer values for categorical embeddings
+            if len(cat_idx_1h) > 0:
+                f_1h[:, cat_idx_1h] = features_1h[:, cat_idx_1h]
+            if len(cat_idx_4h) > 0:
+                f_4h[:, cat_idx_4h] = features_4h[:, cat_idx_4h]
+            if len(cat_idx_1d) > 0:
+                f_1d[:, cat_idx_1d] = features_1d[:, cat_idx_1d]
+            if len(cat_idx_1w) > 0:
+                f_1w[:, cat_idx_1w] = features_1w[:, cat_idx_1w]
+        else:
+            f_1h, f_4h, f_1d, f_1w = features_1h, features_4h, features_1d, features_1w
+            
         target = df_1h[target_col].values if target_col in df_1h.columns else None
         
         X_1h, X_4h, X_1d, X_1w, y = [], [], [], [], []
@@ -232,60 +288,27 @@ class PricePredictor:
         idx_1d = df_1d.index.get_indexer(df_1h.index, method='ffill')
         idx_1w = df_1w.index.get_indexer(df_1h.index, method='ffill')
         
-        for i in range(self.input_chunk_length, len(df_1h)):
+        # Proper window slicing: includes the decision candle i at the end of the sequence
+        for i in range(self.input_chunk_length - 1, len(df_1h)):
             i_4h = idx_4h[i]
             i_1d = idx_1d[i]
             i_1w = idx_1w[i]
             
-            if i_4h >= 52 and i_1d >= 52 and i_1w >= 52:
-                X_1h.append(features_1h[i - self.input_chunk_length : i])
-                X_4h.append(features_4h[i_4h - 52 : i_4h])
-                X_1d.append(features_1d[i_1d - 52 : i_1d])
-                X_1w.append(features_1w[i_1w - 52 : i_1w])
+            if i_4h >= 51 and i_1d >= 51 and i_1w >= 51:
+                X_1h.append(f_1h[i - self.input_chunk_length + 1 : i + 1])
+                X_4h.append(f_4h[i_4h - 52 + 1 : i_4h + 1])
+                X_1d.append(f_1d[i_1d - 52 + 1 : i_1d + 1])
+                X_1w.append(f_1w[i_1w - 52 + 1 : i_1w + 1])
                 if target is not None:
                     y.append(target[i])
                     
-        X_1h, X_4h, X_1d, X_1w = np.array(X_1h, dtype=np.float32), np.array(X_4h, dtype=np.float32), np.array(X_1d, dtype=np.float32), np.array(X_1w, dtype=np.float32)
+        X_1h = np.nan_to_num(np.array(X_1h, dtype=np.float32), nan=0.0)
+        X_4h = np.nan_to_num(np.array(X_4h, dtype=np.float32), nan=0.0)
+        X_1d = np.nan_to_num(np.array(X_1d, dtype=np.float32), nan=0.0)
+        X_1w = np.nan_to_num(np.array(X_1w, dtype=np.float32), nan=0.0)
         
         if target is not None:
-            y = np.array(y)
-            if clean_noise:
-                print("Applying PyTorch Multi-Timeframe ENN to clean noise...")
-                
-                def scale_and_flatten(X_arr):
-                    # X_arr shape: (N, seq_len, num_features)
-                    # Dynamically scale each window independently
-                    mean = np.mean(X_arr, axis=1, keepdims=True)
-                    std = np.std(X_arr, axis=1, keepdims=True)
-                    std = np.where(std > 1e-4, std, 1.0)
-                    X_scaled = (X_arr - mean) / std
-                    # Flatten
-                    return X_scaled.reshape(X_scaled.shape[0], -1)
-
-                X1_flat = scale_and_flatten(X_1h)
-                X4_flat = scale_and_flatten(X_4h)
-                X1d_flat = scale_and_flatten(X_1d)
-                X1w_flat = scale_and_flatten(X_1w)
-                
-                # Concatenate 1H and 4H scaled timeframes to prevent dimensionality explosion
-                X_enn = np.concatenate([X1_flat, X4_flat], axis=1)
-                X_enn = np.nan_to_num(X_enn, nan=0.0)
-                
-                # Free memory
-                del X1_flat, X4_flat, X1d_flat, X1w_flat
-                gc.collect()
-                
-                enn = PyTorchENN(n_neighbors=5, kind_sel='mode', batch_size=256, device='cuda')
-                keep_idx = enn.fit_resample(X_enn, y)
-                
-                noisy_samples = len(y) - len(keep_idx)
-                print(f"Relabeled {noisy_samples} noisy/contradictory samples as 'Flat' (0) out of {len(y)}")
-                
-                noisy_mask = np.ones(len(y), dtype=bool)
-                noisy_mask[keep_idx] = False
-                y[noisy_mask] = 0
-                
-            return X_1h, X_4h, X_1d, X_1w, y
+            return X_1h, X_4h, X_1d, X_1w, np.array(y, dtype=np.int64)
             
         return X_1h, X_4h, X_1d, X_1w
 
@@ -296,8 +319,8 @@ class PricePredictor:
         idx_1w = df_1w.index.get_indexer(df_1h.index, method='ffill')
         
         valid_mask = np.zeros(len(df_1h), dtype=bool)
-        for i in range(self.input_chunk_length, len(df_1h)):
-            if idx_4h[i] >= 52 and idx_1d[i] >= 52 and idx_1w[i] >= 52:
+        for i in range(self.input_chunk_length - 1, len(df_1h)):
+            if idx_4h[i] >= 51 and idx_1d[i] >= 51 and idx_1w[i] >= 51:
                 valid_mask[i] = True
         return df_1h.iloc[valid_mask]
 
@@ -305,8 +328,8 @@ class PricePredictor:
         df_1h_t, df_4h_t, df_1d_t, df_1w_t = dfs_train
         df_1h_v, df_4h_v, df_1d_v, df_1w_v = dfs_val
 
-        X1_t, X4_t, X1d_t, X1w_t, y_t = self.create_sequences(df_1h_t, df_4h_t, df_1d_t, df_1w_t, clean_noise=False, target_col=target_col)
-        X1_v, X4_v, X1d_v, X1w_v, y_v = self.create_sequences(df_1h_v, df_4h_v, df_1d_v, df_1w_v, clean_noise=False, target_col=target_col)
+        X1_t, X4_t, X1d_t, X1w_t, y_t = self.create_sequences(df_1h_t, df_4h_t, df_1d_t, df_1w_t, fit_scaler=True, target_col=target_col)
+        X1_v, X4_v, X1d_v, X1w_v, y_v = self.create_sequences(df_1h_v, df_4h_v, df_1d_v, df_1w_v, fit_scaler=False, target_col=target_col)
 
         X1_t = torch.FloatTensor(X1_t).to(self.device)
         X4_t = torch.FloatTensor(X4_t).to(self.device)
@@ -349,81 +372,52 @@ class PricePredictor:
         val_dataset = torch.utils.data.TensorDataset(X1_v, X4_v, X1d_v, X1w_v, y_v)
         val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
 
-        criterion = SupervisedContrastiveClusteringLoss(batch_size=batch_size)
-        
         # Class-weighted cross-entropy to combat imbalance
-        # Compute inverse-frequency weights from training labels
         label_counts = torch.bincount(y_t, minlength=self.num_classes).float()
         class_weights = (1.0 / (label_counts + 1e-6))
-        class_weights = class_weights / class_weights.sum() * float(self.num_classes)  # normalize
+        class_weights = class_weights / class_weights.sum() * float(self.num_classes)
         class_weights = class_weights.to(self.device)
         
-        # Standard CrossEntropyLoss with class weights and label smoothing provides non-vanishing gradients
         ce_criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
         
         print(f"Class weights: {class_weights.cpu().numpy()}")
-        print("Starting MTF Supervised Contrastive + Classification Training...")
+        print("Starting Clean Supervised MTF-TFT Classification Training...")
         
         best_val_f1 = -float('inf')
         patience_counter = 0
         best_model_state = None
 
-        if active_augs is None:
-            active_augs = ['jitter', 'scaling', 'skew']
-
         for epoch in range(epochs):
             self.model.train()
             total_loss = 0
-            total_ce_loss = 0
             for b_x1, b_x4, b_x1d, b_x1w, b_y in train_loader:
                 optimizer.zero_grad()
                 
-                # 1. Clean forward pass for primary classification guidance
-                _, z_clean, _, logits_clean = self.model(b_x1, b_x4, b_x1d, b_x1w)
-                loss_ce = ce_criterion(logits_clean, b_y)
+                # Direct clean supervised forward pass
+                _, _, _, logits = self.model(b_x1, b_x4, b_x1d, b_x1w)
+                loss = ce_criterion(logits, b_y)
                 
-                # 2. Augmented forward passes for auxiliary contrastive learning
-                x1_i, x4_i, x1d_i, x1w_i = self.augmenter.augment(b_x1, active_augs=active_augs), b_x4, b_x1d, b_x1w
-                x1_j, x4_j, x1d_j, x1w_j = self.augmenter.augment(b_x1, active_augs=active_augs), b_x4, b_x1d, b_x1w
-                
-                # Restore original categorical features
-                if len(cat_indices) > 0:
-                    x1_i[:, :, cat_indices] = b_x1[:, :, cat_indices]
-                    x1_j[:, :, cat_indices] = b_x1[:, :, cat_indices]
-                
-                _, z_i, c_i, _ = self.model(x1_i, x4_i, x1d_i, x1w_i)
-                _, z_j, c_j, _ = self.model(x1_j, x4_j, x1d_j, x1w_j)
-                
-                loss_contrastive = criterion(z_i, z_j, c_i, c_j, b_y)
-                
-                # Combined Multi-Task Loss: Primary CE + 0.1 * Contrastive Regularizer
-                loss = loss_ce + 0.1 * loss_contrastive
                 loss.backward()
                 nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=2.0)
                 optimizer.step()
                 total_loss += loss.item()
-                total_ce_loss += loss_ce.item()
                 
             scheduler.step()
                 
             avg_train_loss = total_loss / len(train_loader)
-            avg_ce_loss = total_ce_loss / len(train_loader)
             self.history['train_loss'].append(avg_train_loss)
             
             self.model.eval()
             total_val_loss = 0
-            total_val_ce = 0
             correct = 0
             total_samples = 0
             all_preds = []
             all_labels = []
             with torch.no_grad():
                 for b_x1, b_x4, b_x1d, b_x1w, b_y in val_loader:
-                    # Clean forward pass on uncorrupted validation data
-                    _, z_val, c_val, logits_val = self.model(b_x1, b_x4, b_x1d, b_x1w)
+                    _, _, _, logits_val = self.model(b_x1, b_x4, b_x1d, b_x1w)
                     loss_ce = ce_criterion(logits_val, b_y)
                     total_val_loss += loss_ce.item()
-                    total_val_ce += loss_ce.item()
                     
                     preds = logits_val.argmax(dim=1)
                     correct += (preds == b_y).sum().item()
@@ -432,13 +426,12 @@ class PricePredictor:
                     all_labels.extend(b_y.cpu().numpy())
                     
             avg_val_loss = total_val_loss / len(val_loader)
-            avg_val_ce = total_val_ce / len(val_loader)
             val_acc = correct / total_samples
             val_macro_f1 = f1_score(all_labels, all_preds, average='macro')
             self.history['val_loss'].append(avg_val_loss)
             
             if (epoch + 1) % 5 == 0 or epoch == 0:
-                print(f"Epoch {epoch+1}/{epochs} | Train: {avg_train_loss:.4f} (CE: {avg_ce_loss:.4f}) | Val F1: {val_macro_f1:.4f} | Val Acc: {val_acc*100:.1f}%")
+                print(f"Epoch {epoch+1}/{epochs} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Val F1: {val_macro_f1:.4f} | Val Acc: {val_acc*100:.1f}%")
                 
             # Early stopping check based on Macro F1 (higher is better)
             import copy
@@ -460,7 +453,7 @@ class PricePredictor:
             self.model.load_state_dict(best_model_state)
             print("Restored best model from early stopping checkpoint (highest Val F1).")
             
-        print(f"Final InfoNCE Loss - Train: {avg_train_loss:.4f} | Val F1: {best_val_f1:.4f}")
+        print(f"Final Model - Train Loss: {avg_train_loss:.4f} | Val F1: {best_val_f1:.4f}")
         return avg_train_loss, best_val_f1
 
     def set_voting_map(self, voting_map):
@@ -590,12 +583,27 @@ class PricePredictor:
         base_model = self.model.module if isinstance(self.model, nn.DataParallel) else self.model
         torch.save({
             'state_dict': base_model.state_dict(),
-            'cat_indices': base_model.cat_indices
+            'cat_indices': base_model.cat_indices,
+            'scalers': {
+                'mean_1h': self.mean_1h, 'std_1h': self.std_1h,
+                'mean_4h': self.mean_4h, 'std_4h': self.std_4h,
+                'mean_1d': self.mean_1d, 'std_1d': self.std_1d,
+                'mean_1w': self.mean_1w, 'std_1w': self.std_1w,
+            }
         }, path)
 
     def load(self, path, input_size):
         checkpoint = torch.load(path)
         cat_indices = checkpoint.get('cat_indices', [])
+        scalers = checkpoint.get('scalers', {})
+        self.mean_1h = scalers.get('mean_1h', None)
+        self.std_1h = scalers.get('std_1h', None)
+        self.mean_4h = scalers.get('mean_4h', None)
+        self.std_4h = scalers.get('std_4h', None)
+        self.mean_1d = scalers.get('mean_1d', None)
+        self.std_1d = scalers.get('std_1d', None)
+        self.mean_1w = scalers.get('mean_1w', None)
+        self.std_1w = scalers.get('std_1w', None)
         
         self.model = MultiTimeframeTFT(
             input_size=input_size, 

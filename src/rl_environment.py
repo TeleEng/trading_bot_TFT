@@ -23,11 +23,16 @@ class TradingRLEnv(gym.Env):
                  is_eval=False,
                  deadzone=0.20,
                  min_confidence=0.50,
+                 min_edge=0.01,
                  reward_mode='net_rr',
                  flat_penalty=0.0,
                  max_risk_multiplier=1.5,
                  cooldown_bars=4,
                  trend_filter=True,
+                 volatility_filter=True,
+                 min_atr_ratio=0.70,
+                 max_atr_ratio=2.50,
+                 breakeven_sl=True,
                  max_wait_bars=96):
         super(TradingRLEnv, self).__init__()
         self.is_eval = is_eval
@@ -38,11 +43,16 @@ class TradingRLEnv(gym.Env):
         # Hyperparameters
         self.deadzone = deadzone
         self.min_confidence = min_confidence
+        self.min_edge = min_edge
         self.reward_mode = reward_mode
         self.flat_penalty = flat_penalty
         self.max_risk_multiplier = max_risk_multiplier
         self.cooldown_bars = cooldown_bars
         self.trend_filter = trend_filter
+        self.volatility_filter = volatility_filter
+        self.min_atr_ratio = min_atr_ratio
+        self.max_atr_ratio = max_atr_ratio
+        self.breakeven_sl = breakeven_sl
         self.max_wait_bars = max_wait_bars
         
         # Extract numpy arrays for O(1) lookups during RL steps
@@ -198,6 +208,12 @@ class TradingRLEnv(gym.Env):
                 exit_price = self._get_fill_price(self.tp_price, -1)
                 reward = self.long_tp_mult * self.current_risk_multiplier
                 return True, reward, exit_price, 1
+            else:
+                # Ratchet Break-Even Stop Loss if favorable price move >= 1.5x ATR
+                if self.breakeven_sl and high >= (self.entry_price + 1.5 * self.entry_atr):
+                    be_price = self.entry_price + (0.1 * self.entry_atr)
+                    if be_price > self.current_sl_price:
+                        self.current_sl_price = be_price
                 
         else:  # Short
             # SL checked first (conservative execution)
@@ -209,6 +225,12 @@ class TradingRLEnv(gym.Env):
                 exit_price = self._get_fill_price(self.tp_price, 1)
                 reward = self.short_tp_mult * self.current_risk_multiplier
                 return True, reward, exit_price, 1
+            else:
+                # Ratchet Break-Even Stop Loss if favorable price move >= 1.5x ATR
+                if self.breakeven_sl and low <= (self.entry_price - 1.5 * self.entry_atr):
+                    be_price = self.entry_price - (0.1 * self.entry_atr)
+                    if be_price < self.current_sl_price:
+                        self.current_sl_price = be_price
                 
         return False, 0.0, 0.0, 0
         
@@ -304,16 +326,17 @@ class TradingRLEnv(gym.Env):
                 self.timeout_trades += 1
                 
             if trade_closed:
-                if exit_reason == 1:
+                gross_pnl = self._close_position(exit_price)
+                net_pnl = gross_pnl - self.trade_accumulated_swap
+                
+                if net_pnl > 0:
                     self.winning_trades += 1
-                elif exit_reason == -1:
+                else:
                     self.losing_trades += 1
                     # Trigger revenge-trade prevention cooldown in the losing direction
                     self.cooldown_remaining = self.cooldown_bars
                     self.last_sl_direction = current_direction
                     
-                gross_pnl = self._close_position(exit_price)
-                net_pnl = gross_pnl - self.trade_accumulated_swap
                 # Realized risk-normalized net PnL reward
                 trade_reward = float(np.clip(net_pnl / self.trade_initial_risk, -3.0, 3.0))
                     
@@ -348,17 +371,26 @@ class TradingRLEnv(gym.Env):
                     elif desired_direction < 0 and macro_dist > 0.5:
                         trend_confirmed = False  # Avoid shorts in strong macro uptrend
                 
-                # Check 3: Backbone Probability Gate
+                # Check 3: Backbone Probability Gate & Relative Probability Edge
                 prob_confirmed = True
                 if self.prob_long is not None and self.prob_short is not None:
-                    p_l = self.prob_long[self.current_step]
-                    p_s = self.prob_short[self.current_step]
-                    if desired_direction > 0 and (p_l < self.min_confidence or p_l <= p_s):
-                        prob_confirmed = False
-                    elif desired_direction < 0 and (p_s < self.min_confidence or p_s <= p_l):
-                        prob_confirmed = False
+                    p_l = float(self.prob_long[self.current_step])
+                    p_s = float(self.prob_short[self.current_step])
+                    if desired_direction > 0:
+                        if p_l < self.min_confidence or (p_l - p_s) < self.min_edge:
+                            prob_confirmed = False
+                    elif desired_direction < 0:
+                        if p_s < self.min_confidence or (p_s - p_l) < self.min_edge:
+                            prob_confirmed = False
                 
-                if is_cooled_down and trend_confirmed and prob_confirmed:
+                # Check 4: Volatility Regime Filter (avoid dead zones and volatile blowouts)
+                vol_confirmed = True
+                if self.volatility_filter and self.atr_ratio is not None:
+                    curr_atr_ratio = float(self.atr_ratio[self.current_step])
+                    if curr_atr_ratio < self.min_atr_ratio or curr_atr_ratio > self.max_atr_ratio:
+                        vol_confirmed = False
+                
+                if is_cooled_down and trend_confirmed and prob_confirmed and vol_confirmed:
                     target_direction = desired_direction
                     conviction = (abs(raw_action) - self.deadzone) / (1.0 - self.deadzone + 1e-8)
                     conviction = float(np.clip(conviction, 0.0, 1.0))

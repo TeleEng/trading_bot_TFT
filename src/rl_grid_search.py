@@ -29,86 +29,105 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
     models_dir.mkdir(parents=True, exist_ok=True)
     results_dir.mkdir(parents=True, exist_ok=True)
     
-    # Grid Search Configurations (Wide 3:2 ATR R:R, Backbone Prob Gating, Net-of-Cost PnL, Trend Filter & Cooldown)
+    # Grid Search Configurations centered on the Profitable Champion Architecture
+    # Features: Wide 3:2 ATR R:R, Backbone Prob Edge, Break-Even Ratchet, Volatility & Trend Filters
     configs = [
         {
-            "name": "NetRR_dz0.20_conf0.52_filterTrue",
-            "reward_mode": "net_rr",
-            "deadzone": 0.20,
-            "min_confidence": 0.52,
-            "ent_coef": 0.01,
-            "lr": 3e-4,
-            "flat_penalty": 0.0,
-            "max_risk_multiplier": 1.5,
-            "cooldown_bars": 4,
-            "trend_filter": True
-        },
-        {
-            "name": "NetRR_dz0.25_conf0.50_filterTrue",
+            "name": "NetRR_dz0.25_edge0.01_BETrue",
             "reward_mode": "net_rr",
             "deadzone": 0.25,
             "min_confidence": 0.50,
+            "min_edge": 0.01,
+            "breakeven_sl": True,
+            "volatility_filter": True,
+            "trend_filter": True,
+            "cooldown_bars": 4,
+            "max_risk_multiplier": 1.5,
             "ent_coef": 0.01,
             "lr": 3e-4,
             "flat_penalty": 0.0,
-            "max_risk_multiplier": 1.5,
-            "cooldown_bars": 4,
-            "trend_filter": True
         },
         {
-            "name": "DSR_dz0.20_conf0.52_filterTrue",
-            "reward_mode": "dsr",
-            "deadzone": 0.20,
-            "min_confidence": 0.52,
-            "ent_coef": 0.01,
-            "lr": 3e-4,
-            "flat_penalty": 0.0,
-            "max_risk_multiplier": 1.5,
-            "cooldown_bars": 4,
-            "trend_filter": True
-        },
-        {
-            "name": "DSR_dz0.15_conf0.50_filterTrue",
-            "reward_mode": "dsr",
-            "deadzone": 0.15,
-            "min_confidence": 0.50,
-            "ent_coef": 0.01,
-            "lr": 3e-4,
-            "flat_penalty": 0.0,
-            "max_risk_multiplier": 1.5,
-            "cooldown_bars": 4,
-            "trend_filter": True
-        },
-        {
-            "name": "DensePnL_dz0.20_conf0.52_filterTrue",
-            "reward_mode": "pnl_dense",
-            "deadzone": 0.20,
-            "min_confidence": 0.52,
-            "ent_coef": 0.01,
-            "lr": 3e-4,
-            "flat_penalty": 0.0,
-            "max_risk_multiplier": 1.5,
-            "cooldown_bars": 4,
-            "trend_filter": True
-        },
-        {
-            "name": "NetRR_dz0.15_conf0.50_filterFalse",
+            "name": "NetRR_dz0.20_edge0.01_BETrue",
             "reward_mode": "net_rr",
-            "deadzone": 0.15,
+            "deadzone": 0.20,
             "min_confidence": 0.50,
+            "min_edge": 0.01,
+            "breakeven_sl": True,
+            "volatility_filter": True,
+            "trend_filter": True,
+            "cooldown_bars": 4,
+            "max_risk_multiplier": 1.5,
             "ent_coef": 0.01,
             "lr": 3e-4,
             "flat_penalty": 0.0,
-            "max_risk_multiplier": 1.5,
+        },
+        {
+            "name": "NetRR_dz0.30_edge0.01_BETrue",
+            "reward_mode": "net_rr",
+            "deadzone": 0.30,
+            "min_confidence": 0.50,
+            "min_edge": 0.01,
+            "breakeven_sl": True,
+            "volatility_filter": True,
+            "trend_filter": True,
             "cooldown_bars": 4,
-            "trend_filter": False
+            "max_risk_multiplier": 1.5,
+            "ent_coef": 0.01,
+            "lr": 3e-4,
+            "flat_penalty": 0.0,
+        },
+        {
+            "name": "NetRR_dz0.25_edge0.02_BETrue",
+            "reward_mode": "net_rr",
+            "deadzone": 0.25,
+            "min_confidence": 0.50,
+            "min_edge": 0.02,
+            "breakeven_sl": True,
+            "volatility_filter": True,
+            "trend_filter": True,
+            "cooldown_bars": 4,
+            "max_risk_multiplier": 1.5,
+            "ent_coef": 0.01,
+            "lr": 3e-4,
+            "flat_penalty": 0.0,
+        },
+        {
+            "name": "NetRR_dz0.20_edge0.02_BETrue",
+            "reward_mode": "net_rr",
+            "deadzone": 0.20,
+            "min_confidence": 0.50,
+            "min_edge": 0.02,
+            "breakeven_sl": True,
+            "volatility_filter": True,
+            "trend_filter": True,
+            "cooldown_bars": 4,
+            "max_risk_multiplier": 1.5,
+            "ent_coef": 0.01,
+            "lr": 3e-4,
+            "flat_penalty": 0.0,
+        },
+        {
+            "name": "DSR_dz0.25_edge0.01_BETrue",
+            "reward_mode": "dsr",
+            "deadzone": 0.25,
+            "min_confidence": 0.50,
+            "min_edge": 0.01,
+            "breakeven_sl": True,
+            "volatility_filter": True,
+            "trend_filter": True,
+            "cooldown_bars": 4,
+            "max_risk_multiplier": 1.5,
+            "ent_coef": 0.01,
+            "lr": 3e-4,
+            "flat_penalty": 0.0,
         }
     ]
     
     print("\n" + "="*70)
     print(f"STARTING RL HYPERPARAMETER GRID SEARCH ({len(configs)} CONFIGURATIONS)")
     print(f"Training Budget: {timesteps_per_config:,} timesteps per configuration")
-    print(f"Key Features: 3.0x/2.0x ATR R/R | Prob Gating | Net-of-Cost Rewards | Trend Filter")
+    print(f"Key Features: 3.0x/2.0x ATR R/R | Prob Edge | Break-Even Ratchet | Vol & Trend Filters")
     print("="*70)
     
     leaderboard = []
@@ -118,7 +137,7 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
     
     for idx, cfg in enumerate(configs, 1):
         print(f"\n[{idx}/{len(configs)}] Evaluating Config: {cfg['name']}")
-        print(f"  -> Reward: {cfg['reward_mode']} | Deadzone: {cfg['deadzone']} | Conf: {cfg.get('min_confidence', 0.50)} | Filter: {cfg['trend_filter']} | Cooldown: {cfg['cooldown_bars']}")
+        print(f"  -> Reward: {cfg['reward_mode']} | Deadzone: {cfg['deadzone']} | Edge: {cfg.get('min_edge', 0.01)} | BE: {cfg.get('breakeven_sl', True)} | Filter: {cfg['trend_filter']} | Cooldown: {cfg['cooldown_bars']}")
         
         train_env = TradingRLEnv(
             train_embeddings, train_df,
@@ -127,11 +146,14 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
             short_tp_mult=3.0, short_sl_mult=2.0,
             deadzone=cfg['deadzone'],
             min_confidence=cfg.get('min_confidence', 0.50),
+            min_edge=cfg.get('min_edge', 0.01),
             reward_mode=cfg['reward_mode'],
             flat_penalty=cfg['flat_penalty'],
             max_risk_multiplier=cfg['max_risk_multiplier'],
             cooldown_bars=cfg['cooldown_bars'],
             trend_filter=cfg['trend_filter'],
+            volatility_filter=cfg.get('volatility_filter', True),
+            breakeven_sl=cfg.get('breakeven_sl', True),
             max_wait_bars=96,
             is_eval=False
         )
@@ -167,11 +189,14 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
             short_tp_mult=3.0, short_sl_mult=2.0,
             deadzone=cfg['deadzone'],
             min_confidence=cfg.get('min_confidence', 0.50),
+            min_edge=cfg.get('min_edge', 0.01),
             reward_mode=cfg['reward_mode'],
             flat_penalty=cfg['flat_penalty'],
             max_risk_multiplier=cfg['max_risk_multiplier'],
             cooldown_bars=cfg['cooldown_bars'],
             trend_filter=cfg['trend_filter'],
+            volatility_filter=cfg.get('volatility_filter', True),
+            breakeven_sl=cfg.get('breakeven_sl', True),
             max_wait_bars=96,
             is_eval=True
         )
@@ -206,12 +231,14 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
         max_dd = metrics.get('Max Drawdown (%)', 0.0)
         profit_factor = metrics.get('Profit Factor', 0.0)
         
-        print(f"  [RESULT] Trades: {total_trades} | Return: {total_return:.2f}% | Sharpe: {sharpe:.2f} | WinRate: {win_rate:.1f}% | MaxDD: {max_dd:.2f}%")
+        print(f"  [RESULT] Trades: {total_trades} | Return: {total_return:.2f}% | Sharpe: {sharpe:.2f} | WinRate: {win_rate:.1f}% | MaxDD: {max_dd:.2f}% | PF: {profit_factor:.2f}")
         
         leaderboard.append({
             "Configuration": cfg['name'],
             "Reward Mode": cfg['reward_mode'],
             "Deadzone": cfg['deadzone'],
+            "Min Edge": cfg.get('min_edge', 0.01),
+            "BE SL": cfg.get('breakeven_sl', True),
             "Filter": cfg['trend_filter'],
             "Total Trades": total_trades,
             "Total Return (%)": total_return,

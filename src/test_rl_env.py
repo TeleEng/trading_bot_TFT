@@ -23,7 +23,9 @@ class TestTradingRLEnv(unittest.TestCase):
         }
         self.df = pd.DataFrame(data)
         self.embeddings = np.zeros((10, 10))  # 10 steps, emb size 10
-        self.probs = np.ones((10, 2)) * 0.55  # 10 steps, high confidence
+        self.probs = np.zeros((10, 2))
+        self.probs[:, 0] = 0.55  # Clear long edge
+        self.probs[:, 1] = 0.45
         
         self.env = TradingRLEnv(
             embeddings=self.embeddings,
@@ -39,11 +41,14 @@ class TestTradingRLEnv(unittest.TestCase):
             swap_pips_per_day=0.5,
             deadzone=0.20,
             min_confidence=0.50,
+            min_edge=0.01,
             reward_mode='net_rr',
             flat_penalty=0.0,
             max_risk_multiplier=1.5,
             cooldown_bars=4,
             trend_filter=True,
+            volatility_filter=True,
+            breakeven_sl=True,
             max_wait_bars=96
         )
         self.env.reset()
@@ -160,6 +165,36 @@ class TestTradingRLEnv(unittest.TestCase):
         self.assertEqual(self.env.position, 0.0)
         self.assertAlmostEqual(reward, -1.5, places=2)
         self.assertEqual(self.env.trade_history[-1][2], -1)
+
+
+    def test_breakeven_sl_ratchet(self):
+        # Enter Long
+        self.env.step([1.0])
+        initial_sl = self.env.current_sl_price
+        # Move price up by 1.6x ATR without hitting TP
+        self.env.df.at[self.env.current_step, 'High'] = self.env.entry_price + (1.6 * self.env.entry_atr)
+        self.env.df.at[self.env.current_step, 'Low'] = self.env.entry_price
+        self.env.step([0.0])
+        expected_be_sl = self.env.entry_price + (0.1 * self.env.entry_atr)
+        self.assertGreater(self.env.current_sl_price, initial_sl)
+        self.assertAlmostEqual(self.env.current_sl_price, expected_be_sl, places=5)
+
+    def test_probability_edge_filter(self):
+        # Probabilities without sufficient edge (p_long 0.505, p_short 0.500 -> diff 0.005 < 0.01)
+        self.env.prob_long = np.ones(10) * 0.505
+        self.env.prob_short = np.ones(10) * 0.500
+        obs, reward, done, trunc, info = self.env.step([0.80])
+        # Should be filtered out
+        self.assertEqual(self.env.position, 0.0)
+        self.assertEqual(self.env.total_trades, 0)
+
+    def test_volatility_filter_low_and_high(self):
+        # ATR_Ratio too low (< 0.70)
+        self.env.df.at[self.env.current_step, 'ATR_Ratio'] = 0.50
+        self.env.atr_ratio = self.env.df['ATR_Ratio'].values
+        obs, reward, done, trunc, info = self.env.step([0.80])
+        self.assertEqual(self.env.position, 0.0)
+        self.assertEqual(self.env.total_trades, 0)
 
 
 if __name__ == '__main__':
