@@ -34,6 +34,8 @@ class TradingRLEnv(gym.Env):
                  max_atr_ratio=2.50,
                  breakeven_sl=True,
                  be_trigger_mult=1.2,
+                 use_ev_gate=False,
+                 min_ev_r=0.0,
                  max_wait_bars=96):
         super(TradingRLEnv, self).__init__()
         self.is_eval = is_eval
@@ -45,6 +47,8 @@ class TradingRLEnv(gym.Env):
         self.deadzone = deadzone
         self.min_confidence = min_confidence
         self.min_edge = min_edge
+        self.use_ev_gate = use_ev_gate
+        self.min_ev_r = min_ev_r
         self.reward_mode = reward_mode
         self.flat_penalty = flat_penalty
         self.max_risk_multiplier = max_risk_multiplier
@@ -488,17 +492,30 @@ class TradingRLEnv(gym.Env):
                     elif desired_direction < 0 and macro_dist > 0.5:
                         trend_confirmed = False  # Avoid shorts in strong macro uptrend
                 
-                # Check 3: Backbone Probability Gate & Relative Probability Edge
+                # Check 3: Backbone Probability Gate & Expected Value (EV) Gate
                 prob_confirmed = True
                 if self.prob_long is not None and self.prob_short is not None:
                     p_l = float(self.prob_long[self.current_step])
                     p_s = float(self.prob_short[self.current_step])
+                    
+                    cost_in_r = (self.spread + self.slippage) / max(1e-5, atr)
+                    ev_long = p_l * self.long_tp_mult - (1.0 - p_l) * self.long_sl_mult - cost_in_r
+                    ev_short = p_s * self.short_tp_mult - (1.0 - p_s) * self.short_sl_mult - cost_in_r
+
                     if desired_direction > 0:
-                        if p_l < self.min_confidence or (p_l - p_s) < self.min_edge:
-                            prob_confirmed = False
+                        if self.use_ev_gate:
+                            if ev_long < self.min_ev_r:
+                                prob_confirmed = False
+                        else:
+                            if p_l < self.min_confidence or (p_l - p_s) < self.min_edge:
+                                prob_confirmed = False
                     elif desired_direction < 0:
-                        if p_s < self.min_confidence or (p_s - p_l) < self.min_edge:
-                            prob_confirmed = False
+                        if self.use_ev_gate:
+                            if ev_short < self.min_ev_r:
+                                prob_confirmed = False
+                        else:
+                            if p_s < self.min_confidence or (p_s - p_l) < self.min_edge:
+                                prob_confirmed = False
                 
                 # Check 4: Volatility Regime Filter (avoid dead zones and volatile blowouts)
                 vol_confirmed = True

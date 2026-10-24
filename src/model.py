@@ -207,15 +207,46 @@ class MultiTimeframeTFT(nn.Module):
         
         return h, z, c_over, logits
 
+class ProbabilityCalibrator:
+    """
+    Platt Scaling (logistic probability calibration: P(y=1|p) = sigmoid(a * logit(p) + b)).
+    Monotonic, preserves ranking, and aligns model outputs with empirical validation base rates.
+    """
+    def __init__(self):
+        self.a = 1.0
+        self.b = 0.0
+
+    def fit(self, probs, labels):
+        p = np.clip(probs, 1e-6, 1.0 - 1e-6)
+        logits = np.log(p / (1.0 - p))
+        y = np.array(labels, dtype=np.float64)
+        
+        try:
+            from sklearn.linear_model import LogisticRegression
+            clf = LogisticRegression(C=1.0)
+            clf.fit(logits.reshape(-1, 1), y)
+            self.a = float(clf.coef_[0][0])
+            self.b = float(clf.intercept_[0])
+        except Exception:
+            self.a = 1.0
+            base_rate = float(np.mean(y))
+            self.b = float(np.log(base_rate / max(1e-6, 1.0 - base_rate)))
+
+    def predict(self, probs):
+        p = np.clip(probs, 1e-6, 1.0 - 1e-6)
+        logits = np.log(p / (1.0 - p))
+        z = self.a * logits + self.b
+        return 1.0 / (1.0 + np.exp(-z))
+
+
 class PricePredictor:
     def __init__(self, input_chunk_length=52, hidden_size=128, num_layers=2, num_classes=2):
         self.input_chunk_length = input_chunk_length
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.num_classes = num_classes
-        if not torch.cuda.is_available():
-            raise RuntimeError("GPU requested but CUDA is not available!")
-        self.device = torch.device('cuda')
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.calibrator = None
         self.model = None
         import copy
         self.copy = copy
@@ -589,6 +620,23 @@ class PricePredictor:
                 
         return np.concatenate(all_probs, axis=0)
 
+    def fit_calibrator(self, dfs_val, target_col='target_long'):
+        """Fits Platt scaling calibrator on the validation split."""
+        raw_probs = self.predict_batch_classified(dfs_val)[:, 1]
+        aligned_df = self.get_aligned_df(*dfs_val)
+        y_val = aligned_df[target_col].values
+        self.calibrator = ProbabilityCalibrator()
+        self.calibrator.fit(raw_probs, y_val)
+        print(f"  [{target_col.upper()}] Platt Calibrator fitted: a={self.calibrator.a:.4f}, b={self.calibrator.b:.4f} (Base Rate: {np.mean(y_val)*100:.1f}%)")
+
+    def predict_batch_calibrated(self, dfs, batch_size=512):
+        """Returns (N, 2) calibrated probabilities [P(0), P(1)]."""
+        raw_probs = self.predict_batch_classified(dfs, batch_size)[:, 1]
+        if hasattr(self, 'calibrator') and self.calibrator is not None:
+            cal_p1 = self.calibrator.predict(raw_probs)
+            return np.column_stack([1.0 - cal_p1, cal_p1])
+        return self.predict_batch_classified(dfs, batch_size)
+
     def predict_batch_voted(self, dfs, batch_size=512):
         """Returns (N, 3) probabilities based on cluster voting map."""
         c_probs = self.predict_batch(dfs, batch_size)
@@ -609,11 +657,12 @@ class PricePredictor:
                 'mean_4h': self.mean_4h, 'std_4h': self.std_4h,
                 'mean_1d': self.mean_1d, 'std_1d': self.std_1d,
                 'mean_1w': self.mean_1w, 'std_1w': self.std_1w,
-            }
+            },
+            'calibrator': getattr(self, 'calibrator', None)
         }, path)
 
     def load(self, path, input_size):
-        checkpoint = torch.load(path)
+        checkpoint = torch.load(path, map_location=self.device)
         cat_indices = checkpoint.get('cat_indices', [])
         scalers = checkpoint.get('scalers', {})
         self.mean_1h = scalers.get('mean_1h', None)
@@ -624,6 +673,7 @@ class PricePredictor:
         self.std_1d = scalers.get('std_1d', None)
         self.mean_1w = scalers.get('mean_1w', None)
         self.std_1w = scalers.get('std_1w', None)
+        self.calibrator = checkpoint.get('calibrator', None)
         
         self.model = MultiTimeframeTFT(
             input_size=input_size, 

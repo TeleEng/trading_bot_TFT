@@ -201,7 +201,7 @@ def main():
             model_long.load(str(long_model_path), input_size=input_size)
             model_short.load(str(short_model_path), input_size=input_size)
         else:
-            print("\n[Phase 3] Supervised Contrastive Training (Long Brain)...")
+            print("\n[Phase 3] Supervised MTF-TFT Training (Long Brain)...")
             train_score_l, val_score_l = model_long.train(
                 train_dfs,
                 val_dfs,
@@ -209,10 +209,9 @@ def main():
                 epochs=150,
                 patience=20
             )
-            print(f"Final InfoNCE Loss (Long) - Train: {train_score_l:.4f} | Val F1: {val_score_l:.4f}")
-            model_long.save(str(long_model_path))
+            print(f"Long Brain Trained - Train Loss: {train_score_l:.4f} | Val F1: {val_score_l:.4f}")
 
-            print("\n[Phase 3.5] Supervised Contrastive Training (Short Brain)...")
+            print("\n[Phase 3.5] Supervised MTF-TFT Training (Short Brain)...")
             train_score_s, val_score_s = model_short.train(
                 train_dfs,
                 val_dfs,
@@ -220,10 +219,15 @@ def main():
                 epochs=150,
                 patience=20
             )
-            print(f"Final InfoNCE Loss (Short) - Train: {train_score_s:.4f} | Val F1: {val_score_s:.4f}")
+            print(f"Short Brain Trained - Train Loss: {train_score_s:.4f} | Val F1: {val_score_s:.4f}")
+
+            print("\n[Phase 3.6] Fitting Probability Calibrators on Validation Split...")
+            model_long.fit_calibrator(val_dfs, target_col="target_long")
+            model_short.fit_calibrator(val_dfs, target_col="target_short")
+            model_long.save(str(long_model_path))
             model_short.save(str(short_model_path))
 
-        print("\n[Phase 3.8] Generating & Caching 256-d Multi-Timeframe Embeddings & Probabilities...")
+        print("\n[Phase 3.8] Generating & Caching 256-d Multi-Timeframe Embeddings & Calibrated Probabilities...")
         train_emb_l = model_long.predict_batch_embeddings(train_dfs)
         train_emb_s = model_short.predict_batch_embeddings(train_dfs)
         train_embeddings = np.concatenate([train_emb_l, train_emb_s], axis=1)
@@ -236,16 +240,16 @@ def main():
         test_emb_s = model_short.predict_batch_embeddings(test_dfs)
         test_embeddings = np.concatenate([test_emb_l, test_emb_s], axis=1)
 
-        train_prob_l = model_long.predict_batch_classified(train_dfs)[:, 1]
-        train_prob_s = model_short.predict_batch_classified(train_dfs)[:, 1]
+        train_prob_l = model_long.predict_batch_calibrated(train_dfs)[:, 1]
+        train_prob_s = model_short.predict_batch_calibrated(train_dfs)[:, 1]
         train_probabilities = np.column_stack([train_prob_l, train_prob_s])
 
-        val_prob_l = model_long.predict_batch_classified(val_dfs)[:, 1]
-        val_prob_s = model_short.predict_batch_classified(val_dfs)[:, 1]
+        val_prob_l = model_long.predict_batch_calibrated(val_dfs)[:, 1]
+        val_prob_s = model_short.predict_batch_calibrated(val_dfs)[:, 1]
         val_probabilities = np.column_stack([val_prob_l, val_prob_s])
 
-        test_prob_l = model_long.predict_batch_classified(test_dfs)[:, 1]
-        test_prob_s = model_short.predict_batch_classified(test_dfs)[:, 1]
+        test_prob_l = model_long.predict_batch_calibrated(test_dfs)[:, 1]
+        test_prob_s = model_short.predict_batch_calibrated(test_dfs)[:, 1]
         test_probabilities = np.column_stack([test_prob_l, test_prob_s])
 
         np.save(train_emb_path, train_embeddings)
