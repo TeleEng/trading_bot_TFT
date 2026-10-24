@@ -197,5 +197,13 @@ class TestTradingRLEnv(unittest.TestCase):
         self.assertEqual(self.env.total_trades, 0)
 
 
+    def test_diagnostic_reports(self):
+        # Enter trade, simulate close, and verify reports run without exception
+        self.env.step([0.80])
+        self.env.step([0.0])
+        self.env.print_funnel_report()
+        self.env.print_exit_and_cost_report()
+
+
 if __name__ == '__main__':
     unittest.main()

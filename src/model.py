@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import confusion_matrix, f1_score
+from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score
 import os
 from pathlib import Path
 
@@ -413,9 +413,10 @@ class PricePredictor:
             total_samples = 0
             all_preds = []
             all_labels = []
+            val_emb_stds = []
             with torch.no_grad():
                 for b_x1, b_x4, b_x1d, b_x1w, b_y in val_loader:
-                    _, _, _, logits_val = self.model(b_x1, b_x4, b_x1d, b_x1w)
+                    h_val, _, _, logits_val = self.model(b_x1, b_x4, b_x1d, b_x1w)
                     loss_ce = ce_criterion(logits_val, b_y)
                     total_val_loss += loss_ce.item()
                     
@@ -424,14 +425,20 @@ class PricePredictor:
                     total_samples += b_y.size(0)
                     all_preds.extend(preds.cpu().numpy())
                     all_labels.extend(b_y.cpu().numpy())
+                    val_emb_stds.append(h_val.std(dim=0).mean().item())
                     
             avg_val_loss = total_val_loss / len(val_loader)
             val_acc = correct / total_samples
             val_macro_f1 = f1_score(all_labels, all_preds, average='macro')
+            val_prec_1 = precision_score(all_labels, all_preds, pos_label=1, zero_division=0)
+            val_rec_1 = recall_score(all_labels, all_preds, pos_label=1, zero_division=0)
+            pred_pos_pct = (np.array(all_preds) == 1).mean() * 100.0
+            true_pos_pct = (np.array(all_labels) == 1).mean() * 100.0
+            avg_emb_std = float(np.mean(val_emb_stds)) if len(val_emb_stds) > 0 else 0.0
             self.history['val_loss'].append(avg_val_loss)
             
             if (epoch + 1) % 5 == 0 or epoch == 0:
-                print(f"Epoch {epoch+1}/{epochs} | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f} | Val F1: {val_macro_f1:.4f} | Val Acc: {val_acc*100:.1f}%")
+                print(f"Epoch {epoch+1:02d}/{epochs:02d} | Train: {avg_train_loss:.4f} | Val: {avg_val_loss:.4f} | F1: {val_macro_f1:.4f} | Acc: {val_acc*100:4.1f}% | PredPos%: {pred_pos_pct:4.1f}% (True: {true_pos_pct:4.1f}%) | Prec: {val_prec_1*100:4.1f}% | Rec: {val_rec_1*100:4.1f}% | EmbStd: {avg_emb_std:.3f}")
                 
             # Early stopping check based on Macro F1 (higher is better)
             import copy

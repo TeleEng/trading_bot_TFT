@@ -146,6 +146,48 @@ class TradingRLEnv(gym.Env):
         self.timeout_trades = 0
         self.realized_pnl = 0.0
         
+        # Diagnostic & telemetry tracking
+        self.trade_mfe = 0.0
+        self.trade_entry_friction = 0.0
+        self.loss_mfe_history = []
+        self.hold_bars_wins = []
+        self.hold_bars_losses = []
+        self.risk_mult_history = []
+        
+        self.exit_tp_count = 0
+        self.exit_tp_pnl = 0.0
+        self.exit_be_count = 0
+        self.exit_be_pnl = 0.0
+        self.exit_sl_count = 0
+        self.exit_sl_pnl = 0.0
+        self.exit_timeout_count = 0
+        self.exit_timeout_pnl = 0.0
+        
+        self.long_trades = 0
+        self.long_wins = 0
+        self.long_pnl = 0.0
+        self.long_gross_profits = 0.0
+        self.long_gross_losses = 0.0
+        
+        self.short_trades = 0
+        self.short_wins = 0
+        self.short_pnl = 0.0
+        self.short_gross_profits = 0.0
+        self.short_gross_losses = 0.0
+        
+        self.total_gross_pnl = 0.0
+        self.total_net_pnl = 0.0
+        self.total_friction = 0.0
+        
+        # Funnel diagnostics
+        self.funnel_flat_bars = 0
+        self.funnel_raw_signals = 0
+        self.funnel_blocked_cooldown = 0
+        self.funnel_blocked_trend = 0
+        self.funnel_blocked_prob_edge = 0
+        self.funnel_blocked_volatility = 0
+        self.funnel_executed_trades = 0
+        
         return self._get_obs(), {}
         
     def _get_obs(self):
@@ -202,8 +244,10 @@ class TradingRLEnv(gym.Env):
             # SL checked first (conservative execution)
             if low <= self.current_sl_price:
                 exit_price = self._get_fill_price(self.current_sl_price, -1)
+                is_be = self.breakeven_sl and (self.current_sl_price > self.entry_price)
+                reason = 2 if is_be else -1
                 reward = -1.0 * self.long_sl_mult * self.current_risk_multiplier
-                return True, reward, exit_price, -1
+                return True, reward, exit_price, reason
             elif high >= self.tp_price:
                 exit_price = self._get_fill_price(self.tp_price, -1)
                 reward = self.long_tp_mult * self.current_risk_multiplier
@@ -219,8 +263,10 @@ class TradingRLEnv(gym.Env):
             # SL checked first (conservative execution)
             if high >= self.current_sl_price:
                 exit_price = self._get_fill_price(self.current_sl_price, 1)
+                is_be = self.breakeven_sl and (self.current_sl_price < self.entry_price)
+                reason = 2 if is_be else -1
                 reward = -1.0 * self.short_sl_mult * self.current_risk_multiplier
-                return True, reward, exit_price, -1
+                return True, reward, exit_price, reason
             elif low <= self.tp_price:
                 exit_price = self._get_fill_price(self.tp_price, 1)
                 reward = self.short_tp_mult * self.current_risk_multiplier
@@ -264,6 +310,9 @@ class TradingRLEnv(gym.Env):
         self.current_risk_multiplier = risk_multiplier
         self.trade_initial_risk = max(1.0, risk_amount)
         self.trade_accumulated_swap = 0.0
+        self.trade_entry_friction = abs(fill_price - price) * abs(target_qty)
+        self.trade_mfe = 0.0
+        self.risk_mult_history.append(risk_multiplier)
         self.bars_held = 0
         self.total_trades += 1
         
@@ -316,6 +365,13 @@ class TradingRLEnv(gym.Env):
         
         # --- Check TP/SL using High/Low and fixed entry ATR ---
         if self.position != 0:
+            if self.entry_atr > 0:
+                if self.position > 0:
+                    favorable = (high - self.entry_price) / self.entry_atr
+                else:
+                    favorable = (self.entry_price - low) / self.entry_atr
+                self.trade_mfe = max(self.trade_mfe, float(favorable))
+                
             trade_closed, _, exit_price, exit_reason = self._check_tp_sl_intrabar(high, low)
             
             # --- Check Time Limit (96 Hours) ---
@@ -326,8 +382,52 @@ class TradingRLEnv(gym.Env):
                 self.timeout_trades += 1
                 
             if trade_closed:
+                # Friction calculation: entry spread + exit spread + swap
+                exit_fill_drag = abs(exit_price - (self.current_sl_price if exit_reason in (-1, 2) else (self.tp_price if exit_reason == 1 else price))) * abs(self.position)
+                trade_friction = self.trade_entry_friction + exit_fill_drag + self.trade_accumulated_swap
+                self.total_friction += trade_friction
+                
                 gross_pnl = self._close_position(exit_price)
                 net_pnl = gross_pnl - self.trade_accumulated_swap
+                self.total_gross_pnl += gross_pnl
+                self.total_net_pnl += net_pnl
+                
+                # Directional breakdown
+                if current_direction > 0:
+                    self.long_trades += 1
+                    if net_pnl > 0: self.long_wins += 1
+                    self.long_pnl += net_pnl
+                    if gross_pnl > 0: self.long_gross_profits += gross_pnl
+                    else: self.long_gross_losses += abs(gross_pnl)
+                else:
+                    self.short_trades += 1
+                    if net_pnl > 0: self.short_wins += 1
+                    self.short_pnl += net_pnl
+                    if gross_pnl > 0: self.short_gross_profits += gross_pnl
+                    else: self.short_gross_losses += abs(gross_pnl)
+                    
+                # Exit type telemetry
+                if exit_reason == 1:
+                    self.exit_tp_count += 1
+                    self.exit_tp_pnl += net_pnl
+                elif exit_reason == 2:
+                    self.exit_be_count += 1
+                    self.exit_be_pnl += net_pnl
+                elif exit_reason == -1:
+                    self.exit_sl_count += 1
+                    self.exit_sl_pnl += net_pnl
+                elif exit_reason == 0:
+                    self.exit_timeout_count += 1
+                    self.exit_timeout_pnl += net_pnl
+                    
+                # Loss MFE tracking
+                if net_pnl <= 0:
+                    self.loss_mfe_history.append(self.trade_mfe)
+                    self.hold_bars_losses.append(self.bars_held)
+                else:
+                    self.hold_bars_wins.append(self.bars_held)
+                    
+                self.trade_mfe = 0.0
                 
                 if net_pnl > 0:
                     self.winning_trades += 1
@@ -352,11 +452,13 @@ class TradingRLEnv(gym.Env):
         risk_multiplier = 0.0
         if self.position == 0 and not trade_closed:
             self.bars_flat += 1
+            self.funnel_flat_bars += 1
             
             raw_action = float(action[0]) if isinstance(action, (list, np.ndarray)) else float(action)
             raw_action = float(np.clip(raw_action, -1.0, 1.0))
             
             if abs(raw_action) > self.deadzone:
+                self.funnel_raw_signals += 1
                 desired_direction = 1.0 if raw_action > 0 else -1.0
                 
                 # Check 1: Cooldown lockout against revenge trading in the same direction
@@ -390,14 +492,21 @@ class TradingRLEnv(gym.Env):
                     if curr_atr_ratio < self.min_atr_ratio or curr_atr_ratio > self.max_atr_ratio:
                         vol_confirmed = False
                 
-                if is_cooled_down and trend_confirmed and prob_confirmed and vol_confirmed:
+                if not is_cooled_down:
+                    self.funnel_blocked_cooldown += 1
+                elif not trend_confirmed:
+                    self.funnel_blocked_trend += 1
+                elif not prob_confirmed:
+                    self.funnel_blocked_prob_edge += 1
+                elif not vol_confirmed:
+                    self.funnel_blocked_volatility += 1
+                else:
+                    self.funnel_executed_trades += 1
                     target_direction = desired_direction
                     conviction = (abs(raw_action) - self.deadzone) / (1.0 - self.deadzone + 1e-8)
                     conviction = float(np.clip(conviction, 0.0, 1.0))
                     risk_multiplier = 1.0 + conviction * (self.max_risk_multiplier - 1.0)
                     self._open_position(price, atr, target_direction, risk_multiplier)
-                else:
-                    target_direction = 0.0
             else:
                 target_direction = 0.0
                 
@@ -458,3 +567,46 @@ class TradingRLEnv(gym.Env):
         }
         
         return self._get_obs(), float(reward), terminated, False, info
+
+    def print_funnel_report(self):
+        s = self.funnel_raw_signals
+        pct = lambda x: (x / s * 100.0) if s > 0 else 0.0
+        print("\n  " + "="*68)
+        print(f"  [ENTRY FUNNEL] Flat Bars: {self.funnel_flat_bars:,} | Raw Signals (|a| > dz): {s:,} ({(s / max(1, self.funnel_flat_bars)*100):.1f}%)")
+        print(f"    ├─ Blocked by Cooldown:        {self.funnel_blocked_cooldown:,} ({pct(self.funnel_blocked_cooldown):.1f}%)")
+        print(f"    ├─ Blocked by Macro Trend:    {self.funnel_blocked_trend:,} ({pct(self.funnel_blocked_trend):.1f}%)")
+        print(f"    ├─ Blocked by Volatility:     {self.funnel_blocked_volatility:,} ({pct(self.funnel_blocked_volatility):.1f}%)")
+        print(f"    ├─ Blocked by Prob/Edge Gate: {self.funnel_blocked_prob_edge:,} ({pct(self.funnel_blocked_prob_edge):.1f}%)")
+        print(f"    └─ EXECUTED TRADES:           {self.funnel_executed_trades:,} ({pct(self.funnel_executed_trades):.1f}% conversion)")
+        print("  " + "="*68)
+
+    def print_exit_and_cost_report(self):
+        total = max(1, self.total_trades)
+        long_pf = (self.long_gross_profits / max(1e-4, self.long_gross_losses)) if self.long_trades > 0 else 0.0
+        short_pf = (self.short_gross_profits / max(1e-4, self.short_gross_losses)) if self.short_trades > 0 else 0.0
+        
+        avg_loss_mfe = float(np.mean(self.loss_mfe_history)) if len(self.loss_mfe_history) > 0 else 0.0
+        losses_above_1_2 = (sum(1 for m in self.loss_mfe_history if m >= 1.2) / max(1, len(self.loss_mfe_history))) * 100.0 if len(self.loss_mfe_history) > 0 else 0.0
+        
+        avg_hold_win = float(np.mean(self.hold_bars_wins)) if len(self.hold_bars_wins) > 0 else 0.0
+        avg_hold_loss = float(np.mean(self.hold_bars_losses)) if len(self.hold_bars_losses) > 0 else 0.0
+        avg_risk_mult = float(np.mean(self.risk_mult_history)) if len(self.risk_mult_history) > 0 else 1.0
+
+        print("  [EXIT TELEMETRY]")
+        print(f"    ├─ Full TP (+3.0x ATR):     {self.exit_tp_count} trades ({(self.exit_tp_count/total*100):.1f}%) | Net PnL: ${self.exit_tp_pnl:+.2f}")
+        print(f"    ├─ Break-Even (+0.1x ATR):  {self.exit_be_count} trades ({(self.exit_be_count/total*100):.1f}%) | Net PnL: ${self.exit_be_pnl:+.2f}")
+        print(f"    ├─ Full SL (-2.0x ATR):     {self.exit_sl_count} trades ({(self.exit_sl_count/total*100):.1f}%) | Net PnL: ${self.exit_sl_pnl:+.2f}")
+        print(f"    └─ Timeouts (96h):          {self.exit_timeout_count} trades ({(self.exit_timeout_count/total*100):.1f}%) | Net PnL: ${self.exit_timeout_pnl:+.2f}")
+        
+        print("  [DIRECTIONAL SPLIT]")
+        print(f"    ├─ Longs:  {self.long_trades} trades | WinRate: {(self.long_wins/max(1, self.long_trades)*100):.1f}% | Net PnL: ${self.long_pnl:+.2f} | PF: {long_pf:.2f}")
+        print(f"    └─ Shorts: {self.short_trades} trades | WinRate: {(self.short_wins/max(1, self.short_trades)*100):.1f}% | Net PnL: ${self.short_pnl:+.2f} | PF: {short_pf:.2f}")
+
+        print("  [LOSS MFE ANALYSIS]")
+        print(f"    └─ Avg peak profit before Full SL: {avg_loss_mfe:+.2f}x ATR ({losses_above_1_2:.1f}% reached >= +1.2x ATR)")
+
+        cost_drag_pct = (self.total_friction / max(1e-4, self.total_gross_pnl)) * 100.0 if self.total_gross_pnl > 0 else 0.0
+        print("  [COST & DURATION ATTRIBUTION]")
+        print(f"    ├─ Gross PnL: ${self.total_gross_pnl:+.2f} | Friction: -${self.total_friction:.2f} | Net PnL: ${self.total_net_pnl:+.2f} (Cost Drag: {cost_drag_pct:.1f}%)")
+        print(f"    └─ Avg Hold (Wins): {avg_hold_win:.1f}h | Avg Hold (Losses): {avg_hold_loss:.1f}h | Avg Risk Multiplier: {avg_risk_mult:.2f}x")
+        print("  " + "="*68 + "\n")

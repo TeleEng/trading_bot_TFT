@@ -18,6 +18,34 @@ from rl_environment import TradingRLEnv
 from performance import PerformanceMetrics
 from stable_baselines3 import PPO
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.callbacks import BaseCallback
+
+
+class DiagnosticsCallback(BaseCallback):
+    def __init__(self, check_freq=50000, total_timesteps=300000, verbose=0):
+        super().__init__(verbose)
+        self.check_freq = check_freq
+        self.total_timesteps = total_timesteps
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.check_freq == 0:
+            try:
+                actions = self.locals.get("actions", None)
+                act_mean = float(np.mean(actions)) if actions is not None else 0.0
+                act_std = float(np.std(actions)) if actions is not None else 0.0
+                
+                rollout = getattr(self.model, "rollout_buffer", None)
+                if rollout is not None and getattr(rollout, "full", False):
+                    returns = rollout.returns.flatten()
+                    values = rollout.values.flatten()
+                    var_y = np.var(returns)
+                    expl_var = float(1 - np.var(returns - values) / var_y) if var_y > 1e-8 else 0.0
+                else:
+                    expl_var = 0.0
+                print(f"    [PPO Step {self.n_calls:,}/{self.total_timesteps:,}] Action Mean: {act_mean:+.3f} (Std: {act_std:.3f}) | ExplVar: {expl_var:+.2f}")
+            except Exception:
+                pass
+        return True
 
 
 def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
@@ -174,8 +202,9 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
             device="cpu"
         )
         
-        # Train PPO Agent
-        agent.learn(total_timesteps=timesteps_per_config)
+        # Train PPO Agent with Periodic Diagnostic Telemetry
+        diag_cb = DiagnosticsCallback(check_freq=50000, total_timesteps=timesteps_per_config)
+        agent.learn(total_timesteps=timesteps_per_config, callback=diag_cb)
         
         # Save config checkpoint
         model_save_path = models_dir / f"ppo_{cfg['name']}.zip"
@@ -232,6 +261,8 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
         profit_factor = metrics.get('Profit Factor', 0.0)
         
         print(f"  [RESULT] Trades: {total_trades} | Return: {total_return:.2f}% | Sharpe: {sharpe:.2f} | WinRate: {win_rate:.1f}% | MaxDD: {max_dd:.2f}% | PF: {profit_factor:.2f}")
+        test_env.print_funnel_report()
+        test_env.print_exit_and_cost_report()
         
         leaderboard.append({
             "Configuration": cfg['name'],

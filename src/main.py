@@ -29,6 +29,54 @@ from stable_baselines3.common.callbacks import EvalCallback
 from stable_baselines3.common.monitor import Monitor
 
 
+def evaluate_probability_calibration(df, probabilities, split_name="Test Split"):
+    """Evaluates probability distributions and empirical edge lift against ground truth."""
+    if probabilities is None or len(probabilities) == 0:
+        return
+    p_long = probabilities[:, 0]
+    p_short = probabilities[:, 1]
+    edge = p_long - p_short
+    
+    print("\n" + "="*70)
+    print(f"BACKBONE PROBABILITY & CALIBRATION REPORT [{split_name.upper()}]")
+    print("="*70)
+    print(f"  p_long  distribution -> Mean: {np.mean(p_long):.4f} | Std: {np.std(p_long):.4f} | Quantiles (10/50/90%): {np.percentile(p_long, 10):.4f} / {np.percentile(p_long, 50):.4f} / {np.percentile(p_long, 90):.4f}")
+    print(f"  p_short distribution -> Mean: {np.mean(p_short):.4f} | Std: {np.std(p_short):.4f} | Quantiles (10/50/90%): {np.percentile(p_short, 10):.4f} / {np.percentile(p_short, 50):.4f} / {np.percentile(p_short, 90):.4f}")
+    print(f"  edge (p_l - p_s)     -> Mean: {np.mean(edge):+.4f} | Std: {np.std(edge):.4f} | Range: [{np.min(edge):+.4f}, {np.max(edge):+.4f}]")
+    
+    target_long = df['target_long'].values if 'target_long' in df.columns else None
+    target_short = df['target_short'].values if 'target_short' in df.columns else None
+    
+    if target_long is not None and len(target_long) == len(probabilities):
+        base_long_rate = (target_long == 1).mean() * 100.0
+        print(f"\n  [LONG EDGE LIFT vs Base Rate {base_long_rate:.1f}%]")
+        for thresh in [0.00, 0.01, 0.02, 0.04]:
+            mask = (edge >= thresh)
+            count = int(np.sum(mask))
+            pct_bars = (count / len(edge)) * 100.0
+            if count > 0:
+                hit_rate = (target_long[mask] == 1).mean() * 100.0
+                lift = hit_rate - base_long_rate
+                print(f"    Edge >= {thresh:+.2f} | Bars: {count:,} ({pct_bars:4.1f}%) | Actual Hit Rate: {hit_rate:4.1f}% (Lift: {lift:+4.1f}%)")
+            else:
+                print(f"    Edge >= {thresh:+.2f} | Bars: 0 (0.0%) | Actual Hit Rate: N/A")
+                
+    if target_short is not None and len(target_short) == len(probabilities):
+        base_short_rate = (target_short == 1).mean() * 100.0
+        print(f"\n  [SHORT EDGE LIFT vs Base Rate {base_short_rate:.1f}%]")
+        for thresh in [0.00, 0.01, 0.02, 0.04]:
+            mask = (-edge >= thresh)
+            count = int(np.sum(mask))
+            pct_bars = (count / len(edge)) * 100.0
+            if count > 0:
+                hit_rate = (target_short[mask] == 1).mean() * 100.0
+                lift = hit_rate - base_short_rate
+                print(f"    Edge >= {thresh:+.2f} | Bars: {count:,} ({pct_bars:4.1f}%) | Actual Hit Rate: {hit_rate:4.1f}% (Lift: {lift:+4.1f}%)")
+            else:
+                print(f"    Edge >= {thresh:+.2f} | Bars: 0 (0.0%) | Actual Hit Rate: N/A")
+    print("="*70 + "\n")
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Trading Bot TFT + RL Pipeline")
     parser.add_argument("--grid-search", action="store_true", help="Run comprehensive RL hyperparameter grid search")
@@ -202,6 +250,9 @@ def main():
         np.save(test_prob_path, test_probabilities)
         print("Embeddings & probabilities successfully cached to disk!")
 
+    # Evaluate Backbone Probability Distribution & Empirical Edge Calibration
+    evaluate_probability_calibration(test_df_aligned, test_probabilities, split_name="Held-Out Test Split")
+
     # Check if user requested Grid Search
     if args.grid_search:
         print("\n[Phase 4] Executing Comprehensive RL Grid Search...")
@@ -343,9 +394,8 @@ def main():
         initial_capital=10000
     )
     PerformanceMetrics.print_report(metrics)
-    
-    print(f"Total Out-Of-Sample Trades Taken: {test_env.total_trades}")
-    print(f"Winning Trades: {test_env.winning_trades} | Losing Trades: {test_env.losing_trades} | Timeouts: {test_env.timeout_trades}")
+    test_env.print_funnel_report()
+    test_env.print_exit_and_cost_report()
 
     print("\nGenerating performance visualization...")
     viz_path = results_dir / "backtest_results.png"
