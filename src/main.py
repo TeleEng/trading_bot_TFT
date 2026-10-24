@@ -141,19 +141,25 @@ def main():
     model_template = PricePredictor()
     
     one_year_bars = 252 * 24
+    max_wait = 96
     test_idx = len(df_1h) - one_year_bars
     val_idx = test_idx - one_year_bars
     
-    train_1h = df_1h.iloc[:val_idx]
-    val_1h = df_1h.iloc[val_idx - model_template.input_chunk_length : test_idx]
+    # Strictly purged split boundaries (purging 96 bars = max_wait label lookahead horizon)
+    train_1h = df_1h.iloc[: val_idx - max_wait]
+    val_1h = df_1h.iloc[val_idx - model_template.input_chunk_length : test_idx - max_wait]
     test_1h = df_1h.iloc[test_idx - model_template.input_chunk_length :]
 
-    train_dfs = (train_1h, df_4h, df_1d, df_1w)
-    val_dfs = (val_1h, df_4h, df_1d, df_1w)
+    train_end = train_1h.index[-1]
+    val_end = val_1h.index[-1]
+
+    # Strictly causal higher-timeframe slicing to prevent scaler leakage
+    train_dfs = (train_1h, df_4h.loc[:train_end], df_1d.loc[:train_end], df_1w.loc[:train_end])
+    val_dfs = (val_1h, df_4h.loc[:val_end], df_1d.loc[:val_end], df_1w.loc[:val_end])
     test_dfs = (test_1h, df_4h, df_1d, df_1w)
     
-    train_df_aligned = model_template.get_aligned_df(train_1h, df_4h, df_1d, df_1w)
-    val_df_aligned = model_template.get_aligned_df(val_1h, df_4h, df_1d, df_1w)
+    train_df_aligned = model_template.get_aligned_df(train_1h, df_4h.loc[:train_end], df_1d.loc[:train_end], df_1w.loc[:train_end])
+    val_df_aligned = model_template.get_aligned_df(val_1h, df_4h.loc[:val_end], df_1d.loc[:val_end], df_1w.loc[:val_end])
     test_df_aligned = model_template.get_aligned_df(test_1h, df_4h, df_1d, df_1w)
 
     # Embedding & Probability Cache Paths

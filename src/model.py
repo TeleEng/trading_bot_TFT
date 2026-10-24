@@ -227,7 +227,7 @@ class PricePredictor:
         self.mean_1w = None; self.std_1w = None
 
     def create_sequences(self, df_1h, df_4h, df_1d, df_1w, fit_scaler=False, target_col='target_long'):
-        drop_cols = ['target_long', 'target_short', 'target', 'Open', 'High', 'Low', 'Close', 'Volume']
+        drop_cols = ['target_long', 'target_short', 'target', 'Open', 'High', 'Low', 'Close', 'Volume', 'ATR', 'SMA_ATR_50', 'hour_sin', 'hour_cos', 'day_sin', 'day_cos']
         raw_1h = df_1h.drop(columns=drop_cols, errors='ignore')
         raw_4h = df_4h.drop(columns=drop_cols, errors='ignore')
         raw_1d = df_1d.drop(columns=drop_cols, errors='ignore')
@@ -284,22 +284,28 @@ class PricePredictor:
         
         X_1h, X_4h, X_1d, X_1w, y = [], [], [], [], []
         
-        idx_4h = df_4h.index.get_indexer(df_1h.index, method='ffill')
-        idx_1d = df_1d.index.get_indexer(df_1h.index, method='ffill')
-        idx_1w = df_1w.index.get_indexer(df_1h.index, method='ffill')
+        close_1h = df_1h.index + pd.Timedelta(hours=1)
+        close_4h = df_4h.index + pd.Timedelta(hours=4)
+        close_1d = df_1d.index + pd.Timedelta(days=1)
+        close_1w = df_1w.index + pd.Timedelta(days=1)
+        
+        # Exact close-time matching: latest completed higher-timeframe bar whose close_tf <= close_1h
+        idx_4h = np.searchsorted(close_4h.values, close_1h.values, side='right') - 1
+        idx_1d = np.searchsorted(close_1d.values, close_1h.values, side='right') - 1
+        idx_1w = np.searchsorted(close_1w.values, close_1h.values, side='right') - 1
         
         # Proper window slicing: includes the decision candle i at the end of the sequence for 1h,
-        # but strictly completed bars for higher timeframes (4h, 1d, 1w) to guarantee zero lookahead bias.
+        # and strictly completed bars up to decision time for higher timeframes (4h, 1d, 1w).
         for i in range(self.input_chunk_length - 1, len(df_1h)):
             i_4h = idx_4h[i]
             i_1d = idx_1d[i]
             i_1w = idx_1w[i]
             
-            if i_4h >= 52 and i_1d >= 52 and i_1w >= 52:
+            if i_4h >= 51 and i_1d >= 51 and i_1w >= 51:
                 X_1h.append(f_1h[i - self.input_chunk_length + 1 : i + 1])
-                X_4h.append(f_4h[i_4h - 52 : i_4h])
-                X_1d.append(f_1d[i_1d - 52 : i_1d])
-                X_1w.append(f_1w[i_1w - 52 : i_1w])
+                X_4h.append(f_4h[i_4h - 52 + 1 : i_4h + 1])
+                X_1d.append(f_1d[i_1d - 52 + 1 : i_1d + 1])
+                X_1w.append(f_1w[i_1w - 52 + 1 : i_1w + 1])
                 if target is not None:
                     y.append(target[i])
                     
@@ -315,13 +321,18 @@ class PricePredictor:
 
     def get_aligned_df(self, df_1h, df_4h, df_1d, df_1w):
         """Returns the subset of df_1h that exactly matches the generated sequences/embeddings."""
-        idx_4h = df_4h.index.get_indexer(df_1h.index, method='ffill')
-        idx_1d = df_1d.index.get_indexer(df_1h.index, method='ffill')
-        idx_1w = df_1w.index.get_indexer(df_1h.index, method='ffill')
+        close_1h = df_1h.index + pd.Timedelta(hours=1)
+        close_4h = df_4h.index + pd.Timedelta(hours=4)
+        close_1d = df_1d.index + pd.Timedelta(days=1)
+        close_1w = df_1w.index + pd.Timedelta(days=1)
+        
+        idx_4h = np.searchsorted(close_4h.values, close_1h.values, side='right') - 1
+        idx_1d = np.searchsorted(close_1d.values, close_1h.values, side='right') - 1
+        idx_1w = np.searchsorted(close_1w.values, close_1h.values, side='right') - 1
         
         valid_mask = np.zeros(len(df_1h), dtype=bool)
         for i in range(self.input_chunk_length - 1, len(df_1h)):
-            if idx_4h[i] >= 52 and idx_1d[i] >= 52 and idx_1w[i] >= 52:
+            if idx_4h[i] >= 51 and idx_1d[i] >= 51 and idx_1w[i] >= 51:
                 valid_mask[i] = True
         return df_1h.iloc[valid_mask]
 
@@ -348,7 +359,7 @@ class PricePredictor:
         
         # Identify Categorical Indices
         cat_cols = ['Hour', 'DayOfWeek']
-        drop_cols = ['target_long', 'target_short', 'target', 'Open', 'High', 'Low', 'Close', 'Volume']
+        drop_cols = ['target_long', 'target_short', 'target', 'Open', 'High', 'Low', 'Close', 'Volume', 'ATR', 'SMA_ATR_50', 'hour_sin', 'hour_cos', 'day_sin', 'day_cos']
         clean_cols = df_1h_t.drop(columns=drop_cols, errors='ignore').columns
         cat_indices = [clean_cols.get_loc(c) for c in cat_cols if c in clean_cols]
 

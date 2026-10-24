@@ -237,7 +237,7 @@ def generate_timeframe_data(timeframe_str, is_base=False):
     unified.ffill(limit=12, inplace=True)
     unified.dropna(inplace=True)
     if is_base:
-        unified = unified.iloc[:-72] # Drop final rows with unresolved labels
+        unified = unified.iloc[:-96] # Drop final rows with unresolved labels (max_wait=96)
 
     unified['hour_sin'] = np.sin(2 * np.pi * unified.index.hour / 24)
     unified['hour_cos'] = np.cos(2 * np.pi * unified.index.hour / 24)

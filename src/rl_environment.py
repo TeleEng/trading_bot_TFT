@@ -59,6 +59,7 @@ class TradingRLEnv(gym.Env):
         
         # Extract numpy arrays for O(1) lookups during RL steps
         self.close_prices = self.df['Close'].values
+        self.open_prices = self.df['Open'].values if 'Open' in self.df.columns else self.close_prices
         self.high_prices = self.df['High'].values if 'High' in self.df.columns else self.close_prices
         self.low_prices = self.df['Low'].values if 'Low' in self.df.columns else self.close_prices
         self.atr_values = self.df['ATR'].values if 'ATR' in self.df.columns else self.close_prices * 0.005
@@ -234,17 +235,22 @@ class TradingRLEnv(gym.Env):
         obs = np.nan_to_num(obs, nan=0.0, posinf=1.0, neginf=-1.0)
         return obs
         
-    def _check_tp_sl_intrabar(self, high, low):
-        """Check TP/SL using High/Low of the bar (intra-bar simulation).
+    def _check_tp_sl_intrabar(self, open_price, high, low):
+        """Check TP/SL using Open/High/Low of the bar (intra-bar simulation with gap awareness).
         Returns: (trade_closed, trade_reward, exit_price, exit_reason)
-        exit_reason: 1 (TP), -1 (SL), 0 (None/Timeout)
+        exit_reason: 1 (TP), -1 (SL), 2 (BE), 0 (None/Timeout)
         """
         if self.position == 0 or self.entry_atr <= 0:
             return False, 0.0, 0.0, 0
             
         if self.position > 0:  # Long
-            # SL checked first (conservative execution)
-            if low <= self.current_sl_price:
+            # 1. Gap Check on Open (conservative gap slippage)
+            if open_price <= self.current_sl_price:
+                exit_price = self._get_fill_price(open_price, -1)
+                reward = -1.0 * self.long_sl_mult * self.current_risk_multiplier
+                return True, reward, exit_price, -1
+            # 2. SL checked during bar
+            elif low <= self.current_sl_price:
                 exit_price = self._get_fill_price(self.current_sl_price, -1)
                 is_be = self.breakeven_sl and (self.current_sl_price > self.entry_price)
                 reason = 2 if is_be else -1
@@ -262,8 +268,13 @@ class TradingRLEnv(gym.Env):
                         self.current_sl_price = be_price
                 
         else:  # Short
-            # SL checked first (conservative execution)
-            if high >= self.current_sl_price:
+            # 1. Gap Check on Open (conservative gap slippage)
+            if open_price >= self.current_sl_price:
+                exit_price = self._get_fill_price(open_price, 1)
+                reward = -1.0 * self.short_sl_mult * self.current_risk_multiplier
+                return True, reward, exit_price, -1
+            # 2. SL checked during bar
+            elif high >= self.current_sl_price:
                 exit_price = self._get_fill_price(self.current_sl_price, 1)
                 is_be = self.breakeven_sl and (self.current_sl_price < self.entry_price)
                 reason = 2 if is_be else -1
@@ -340,12 +351,13 @@ class TradingRLEnv(gym.Env):
             return self._get_obs(), 0.0, True, False, info
             
         price = self.close_prices[self.current_step]
+        open_price = self.open_prices[self.current_step]
         high = self.high_prices[self.current_step]
         low = self.low_prices[self.current_step]
         atr = self.atr_values[self.current_step]
         
-        # Cap ATR
-        atr = max(price * 0.001, min(atr, price * 0.02))
+        # Guard against non-positive ATR (aligned with preprocess.py raw ATR)
+        atr = max(1e-6, min(atr, price * 0.05))
         
         trade_closed = False
         trade_reward = 0.0
@@ -374,7 +386,7 @@ class TradingRLEnv(gym.Env):
                     favorable = (self.entry_price - low) / self.entry_atr
                 self.trade_mfe = max(self.trade_mfe, float(favorable))
                 
-            trade_closed, _, exit_price, exit_reason = self._check_tp_sl_intrabar(high, low)
+            trade_closed, _, exit_price, exit_reason = self._check_tp_sl_intrabar(open_price, high, low)
             
             # --- Check Time Limit (96 Hours) ---
             if not trade_closed and self.bars_held >= self.max_wait_bars:
