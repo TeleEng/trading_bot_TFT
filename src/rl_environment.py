@@ -33,6 +33,7 @@ class TradingRLEnv(gym.Env):
                  min_atr_ratio=0.70,
                  max_atr_ratio=2.50,
                  breakeven_sl=True,
+                 be_trigger_mult=1.2,
                  max_wait_bars=96):
         super(TradingRLEnv, self).__init__()
         self.is_eval = is_eval
@@ -53,6 +54,7 @@ class TradingRLEnv(gym.Env):
         self.min_atr_ratio = min_atr_ratio
         self.max_atr_ratio = max_atr_ratio
         self.breakeven_sl = breakeven_sl
+        self.be_trigger_mult = be_trigger_mult
         self.max_wait_bars = max_wait_bars
         
         # Extract numpy arrays for O(1) lookups during RL steps
@@ -253,8 +255,8 @@ class TradingRLEnv(gym.Env):
                 reward = self.long_tp_mult * self.current_risk_multiplier
                 return True, reward, exit_price, 1
             else:
-                # Ratchet Break-Even Stop Loss if favorable price move >= 1.5x ATR
-                if self.breakeven_sl and high >= (self.entry_price + 1.5 * self.entry_atr):
+                # Ratchet Break-Even Stop Loss if favorable price move >= be_trigger_mult * ATR
+                if self.breakeven_sl and high >= (self.entry_price + self.be_trigger_mult * self.entry_atr):
                     be_price = self.entry_price + (0.1 * self.entry_atr)
                     if be_price > self.current_sl_price:
                         self.current_sl_price = be_price
@@ -272,8 +274,8 @@ class TradingRLEnv(gym.Env):
                 reward = self.short_tp_mult * self.current_risk_multiplier
                 return True, reward, exit_price, 1
             else:
-                # Ratchet Break-Even Stop Loss if favorable price move >= 1.5x ATR
-                if self.breakeven_sl and low <= (self.entry_price - 1.5 * self.entry_atr):
+                # Ratchet Break-Even Stop Loss if favorable price move >= be_trigger_mult * ATR
+                if self.breakeven_sl and low <= (self.entry_price - self.be_trigger_mult * self.entry_atr):
                     be_price = self.entry_price - (0.1 * self.entry_atr)
                     if be_price < self.current_sl_price:
                         self.current_sl_price = be_price
@@ -382,6 +384,7 @@ class TradingRLEnv(gym.Env):
                 self.timeout_trades += 1
                 
             if trade_closed:
+                held_bars = self.bars_held
                 # Friction calculation: entry spread + exit spread + swap
                 exit_fill_drag = abs(exit_price - (self.current_sl_price if exit_reason in (-1, 2) else (self.tp_price if exit_reason == 1 else price))) * abs(self.position)
                 trade_friction = self.trade_entry_friction + exit_fill_drag + self.trade_accumulated_swap
@@ -423,9 +426,9 @@ class TradingRLEnv(gym.Env):
                 # Loss MFE tracking
                 if net_pnl <= 0:
                     self.loss_mfe_history.append(self.trade_mfe)
-                    self.hold_bars_losses.append(self.bars_held)
+                    self.hold_bars_losses.append(held_bars)
                 else:
-                    self.hold_bars_wins.append(self.bars_held)
+                    self.hold_bars_wins.append(held_bars)
                     
                 self.trade_mfe = 0.0
                 
@@ -603,7 +606,7 @@ class TradingRLEnv(gym.Env):
         print(f"    └─ Shorts: {self.short_trades} trades | WinRate: {(self.short_wins/max(1, self.short_trades)*100):.1f}% | Net PnL: ${self.short_pnl:+.2f} | PF: {short_pf:.2f}")
 
         print("  [LOSS MFE ANALYSIS]")
-        print(f"    └─ Avg peak profit before Full SL: {avg_loss_mfe:+.2f}x ATR ({losses_above_1_2:.1f}% reached >= +1.2x ATR)")
+        print(f"    └─ Avg peak profit before Full SL: {avg_loss_mfe:+.2f}x ATR ({losses_above_1_2:.1f}% reached >= +1.2x ATR | BE Trigger: {self.be_trigger_mult:.1f}x ATR)")
 
         cost_drag_pct = (self.total_friction / max(1e-4, self.total_gross_pnl)) * 100.0 if self.total_gross_pnl > 0 else 0.0
         print("  [COST & DURATION ATTRIBUTION]")

@@ -26,26 +26,29 @@ class DiagnosticsCallback(BaseCallback):
         super().__init__(verbose)
         self.check_freq = check_freq
         self.total_timesteps = total_timesteps
+        self.last_reported_step = 0
 
     def _on_step(self) -> bool:
-        if self.n_calls % self.check_freq == 0:
+        return True
+
+    def _on_rollout_end(self) -> None:
+        if self.last_reported_step == 0 or (self.num_timesteps - self.last_reported_step) >= self.check_freq:
+            self.last_reported_step = self.num_timesteps
             try:
-                actions = self.locals.get("actions", None)
-                act_mean = float(np.mean(actions)) if actions is not None else 0.0
-                act_std = float(np.std(actions)) if actions is not None else 0.0
-                
                 rollout = getattr(self.model, "rollout_buffer", None)
-                if rollout is not None and getattr(rollout, "full", False):
+                if rollout is not None:
+                    # rollout.actions has shape (buffer_size, n_envs, action_dim)
+                    actions = rollout.actions.flatten()
+                    act_mean = float(np.mean(actions))
+                    act_std = float(np.std(actions))
+                    
                     returns = rollout.returns.flatten()
                     values = rollout.values.flatten()
                     var_y = np.var(returns)
-                    expl_var = float(1 - np.var(returns - values) / var_y) if var_y > 1e-8 else 0.0
-                else:
-                    expl_var = 0.0
-                print(f"    [PPO Step {self.n_calls:,}/{self.total_timesteps:,}] Action Mean: {act_mean:+.3f} (Std: {act_std:.3f}) | ExplVar: {expl_var:+.2f}")
+                    expl_var = float(1.0 - np.var(returns - values) / var_y) if var_y > 1e-8 else 0.0
+                    print(f"    [PPO Step {self.num_timesteps:,}/{self.total_timesteps:,}] Action Mean: {act_mean:+.3f} (Std: {act_std:.3f}) | ExplVar: {expl_var:+.2f}")
             except Exception:
                 pass
-        return True
 
 
 def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
@@ -58,15 +61,16 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
     results_dir.mkdir(parents=True, exist_ok=True)
     
     # Grid Search Configurations centered on the Profitable Champion Architecture
-    # Features: Wide 3:2 ATR R:R, Backbone Prob Edge, Break-Even Ratchet, Volatility & Trend Filters
+    # Features: Wide 3:2 ATR R:R, Backbone Prob Edge, Break-Even Ratchet (1.2x vs 1.5x), Volatility & Trend Filters
     configs = [
         {
-            "name": "NetRR_dz0.25_edge0.01_BETrue",
+            "name": "NetRR_dz0.25_edge0.01_BE1.2",
             "reward_mode": "net_rr",
             "deadzone": 0.25,
             "min_confidence": 0.50,
             "min_edge": 0.01,
             "breakeven_sl": True,
+            "be_trigger_mult": 1.2,
             "volatility_filter": True,
             "trend_filter": True,
             "cooldown_bars": 4,
@@ -76,42 +80,13 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
             "flat_penalty": 0.0,
         },
         {
-            "name": "NetRR_dz0.20_edge0.01_BETrue",
-            "reward_mode": "net_rr",
-            "deadzone": 0.20,
-            "min_confidence": 0.50,
-            "min_edge": 0.01,
-            "breakeven_sl": True,
-            "volatility_filter": True,
-            "trend_filter": True,
-            "cooldown_bars": 4,
-            "max_risk_multiplier": 1.5,
-            "ent_coef": 0.01,
-            "lr": 3e-4,
-            "flat_penalty": 0.0,
-        },
-        {
-            "name": "NetRR_dz0.30_edge0.01_BETrue",
-            "reward_mode": "net_rr",
-            "deadzone": 0.30,
-            "min_confidence": 0.50,
-            "min_edge": 0.01,
-            "breakeven_sl": True,
-            "volatility_filter": True,
-            "trend_filter": True,
-            "cooldown_bars": 4,
-            "max_risk_multiplier": 1.5,
-            "ent_coef": 0.01,
-            "lr": 3e-4,
-            "flat_penalty": 0.0,
-        },
-        {
-            "name": "NetRR_dz0.25_edge0.02_BETrue",
+            "name": "NetRR_dz0.25_edge0.02_BE1.2",
             "reward_mode": "net_rr",
             "deadzone": 0.25,
             "min_confidence": 0.50,
             "min_edge": 0.02,
             "breakeven_sl": True,
+            "be_trigger_mult": 1.2,
             "volatility_filter": True,
             "trend_filter": True,
             "cooldown_bars": 4,
@@ -121,12 +96,29 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
             "flat_penalty": 0.0,
         },
         {
-            "name": "NetRR_dz0.20_edge0.02_BETrue",
+            "name": "NetRR_dz0.20_edge0.01_BE1.2",
+            "reward_mode": "net_rr",
+            "deadzone": 0.20,
+            "min_confidence": 0.50,
+            "min_edge": 0.01,
+            "breakeven_sl": True,
+            "be_trigger_mult": 1.2,
+            "volatility_filter": True,
+            "trend_filter": True,
+            "cooldown_bars": 4,
+            "max_risk_multiplier": 1.5,
+            "ent_coef": 0.01,
+            "lr": 3e-4,
+            "flat_penalty": 0.0,
+        },
+        {
+            "name": "NetRR_dz0.20_edge0.02_BE1.2",
             "reward_mode": "net_rr",
             "deadzone": 0.20,
             "min_confidence": 0.50,
             "min_edge": 0.02,
             "breakeven_sl": True,
+            "be_trigger_mult": 1.2,
             "volatility_filter": True,
             "trend_filter": True,
             "cooldown_bars": 4,
@@ -136,12 +128,29 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
             "flat_penalty": 0.0,
         },
         {
-            "name": "DSR_dz0.25_edge0.01_BETrue",
+            "name": "NetRR_dz0.25_edge0.01_BE1.5",
+            "reward_mode": "net_rr",
+            "deadzone": 0.25,
+            "min_confidence": 0.50,
+            "min_edge": 0.01,
+            "breakeven_sl": True,
+            "be_trigger_mult": 1.5,
+            "volatility_filter": True,
+            "trend_filter": True,
+            "cooldown_bars": 4,
+            "max_risk_multiplier": 1.5,
+            "ent_coef": 0.01,
+            "lr": 3e-4,
+            "flat_penalty": 0.0,
+        },
+        {
+            "name": "DSR_dz0.25_edge0.01_BE1.2",
             "reward_mode": "dsr",
             "deadzone": 0.25,
             "min_confidence": 0.50,
             "min_edge": 0.01,
             "breakeven_sl": True,
+            "be_trigger_mult": 1.2,
             "volatility_filter": True,
             "trend_filter": True,
             "cooldown_bars": 4,
@@ -165,7 +174,7 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
     
     for idx, cfg in enumerate(configs, 1):
         print(f"\n[{idx}/{len(configs)}] Evaluating Config: {cfg['name']}")
-        print(f"  -> Reward: {cfg['reward_mode']} | Deadzone: {cfg['deadzone']} | Edge: {cfg.get('min_edge', 0.01)} | BE: {cfg.get('breakeven_sl', True)} | Filter: {cfg['trend_filter']} | Cooldown: {cfg['cooldown_bars']}")
+        print(f"  -> Reward: {cfg['reward_mode']} | Deadzone: {cfg['deadzone']} | Edge: {cfg.get('min_edge', 0.01)} | BE: {cfg.get('breakeven_sl', True)} ({cfg.get('be_trigger_mult', 1.2):.1f}x) | Filter: {cfg['trend_filter']} | Cooldown: {cfg['cooldown_bars']}")
         
         train_env = TradingRLEnv(
             train_embeddings, train_df,
@@ -182,6 +191,7 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
             trend_filter=cfg['trend_filter'],
             volatility_filter=cfg.get('volatility_filter', True),
             breakeven_sl=cfg.get('breakeven_sl', True),
+            be_trigger_mult=cfg.get('be_trigger_mult', 1.2),
             max_wait_bars=96,
             is_eval=False
         )
@@ -226,6 +236,7 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
             trend_filter=cfg['trend_filter'],
             volatility_filter=cfg.get('volatility_filter', True),
             breakeven_sl=cfg.get('breakeven_sl', True),
+            be_trigger_mult=cfg.get('be_trigger_mult', 1.2),
             max_wait_bars=96,
             is_eval=True
         )
@@ -270,6 +281,7 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
             "Deadzone": cfg['deadzone'],
             "Min Edge": cfg.get('min_edge', 0.01),
             "BE SL": cfg.get('breakeven_sl', True),
+            "BE Mult": cfg.get('be_trigger_mult', 1.2),
             "Filter": cfg['trend_filter'],
             "Total Trades": total_trades,
             "Total Return (%)": total_return,

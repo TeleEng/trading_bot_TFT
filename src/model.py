@@ -80,7 +80,7 @@ class PositionalEncoding(nn.Module):
         return x + self.pe[:x.size(1), :]
 
 class MultiTimeframeTFT(nn.Module):
-    def __init__(self, input_size, hidden_size, num_layers, cat_indices=None, num_over_clusters=6, dropout=0.3, num_classes=3):
+    def __init__(self, input_size, hidden_size, num_layers, cat_indices=None, num_over_clusters=6, dropout=0.35, num_classes=3):
         super(MultiTimeframeTFT, self).__init__()
         
         self.cat_indices = cat_indices if cat_indices is not None else []
@@ -288,17 +288,18 @@ class PricePredictor:
         idx_1d = df_1d.index.get_indexer(df_1h.index, method='ffill')
         idx_1w = df_1w.index.get_indexer(df_1h.index, method='ffill')
         
-        # Proper window slicing: includes the decision candle i at the end of the sequence
+        # Proper window slicing: includes the decision candle i at the end of the sequence for 1h,
+        # but strictly completed bars for higher timeframes (4h, 1d, 1w) to guarantee zero lookahead bias.
         for i in range(self.input_chunk_length - 1, len(df_1h)):
             i_4h = idx_4h[i]
             i_1d = idx_1d[i]
             i_1w = idx_1w[i]
             
-            if i_4h >= 51 and i_1d >= 51 and i_1w >= 51:
+            if i_4h >= 52 and i_1d >= 52 and i_1w >= 52:
                 X_1h.append(f_1h[i - self.input_chunk_length + 1 : i + 1])
-                X_4h.append(f_4h[i_4h - 52 + 1 : i_4h + 1])
-                X_1d.append(f_1d[i_1d - 52 + 1 : i_1d + 1])
-                X_1w.append(f_1w[i_1w - 52 + 1 : i_1w + 1])
+                X_4h.append(f_4h[i_4h - 52 : i_4h])
+                X_1d.append(f_1d[i_1d - 52 : i_1d])
+                X_1w.append(f_1w[i_1w - 52 : i_1w])
                 if target is not None:
                     y.append(target[i])
                     
@@ -320,7 +321,7 @@ class PricePredictor:
         
         valid_mask = np.zeros(len(df_1h), dtype=bool)
         for i in range(self.input_chunk_length - 1, len(df_1h)):
-            if idx_4h[i] >= 51 and idx_1d[i] >= 51 and idx_1w[i] >= 51:
+            if idx_4h[i] >= 52 and idx_1d[i] >= 52 and idx_1w[i] >= 52:
                 valid_mask[i] = True
         return df_1h.iloc[valid_mask]
 
@@ -356,14 +357,15 @@ class PricePredictor:
             hidden_size=self.hidden_size, 
             num_layers=self.num_layers,
             cat_indices=cat_indices,
-            num_classes=self.num_classes
+            num_classes=self.num_classes,
+            dropout=0.35
         ).to(self.device)
 
         if torch.cuda.device_count() > 1:
             print(f"Using {torch.cuda.device_count()} GPUs for PyTorch training via DataParallel!")
             self.model = nn.DataParallel(self.model)
 
-        optimizer = optim.Adam(self.model.parameters(), lr=1e-3, weight_decay=1e-4)
+        optimizer = optim.Adam(self.model.parameters(), lr=3e-4, weight_decay=1e-3)
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
         
         train_dataset = torch.utils.data.TensorDataset(X1_t, X4_t, X1d_t, X1w_t, y_t)
@@ -617,7 +619,8 @@ class PricePredictor:
             hidden_size=self.hidden_size, 
             num_layers=self.num_layers,
             cat_indices=cat_indices,
-            num_classes=self.num_classes
+            num_classes=self.num_classes,
+            dropout=0.35
         ).to(self.device)
         self.model.load_state_dict(checkpoint['state_dict'])
         
