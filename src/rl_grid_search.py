@@ -54,7 +54,12 @@ class DiagnosticsCallback(BaseCallback):
 def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
                      train_df, val_df, test_df,
                      train_probs=None, val_probs=None, test_probs=None,
-                     timesteps_per_config=300000):
+                     timesteps_per_config=300000,
+                     train_ev_probs=None, val_ev_probs=None, test_ev_probs=None):
+    """
+    train/val/test_probs     -> prior-corrected (balanced, 0.50 == base rate) probs for obs + edge gate.
+    train/val/test_ev_probs  -> TRUE calibrated P(TP hit) used only by the EV-in-R gate.
+    """
     models_dir = base_dir / "models"
     results_dir = base_dir / "results"
     models_dir.mkdir(parents=True, exist_ok=True)
@@ -179,6 +184,7 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
         train_env = TradingRLEnv(
             train_embeddings, train_df,
             probabilities=train_probs,
+            ev_probabilities=train_ev_probs,
             long_tp_mult=3.0, long_sl_mult=2.0,
             short_tp_mult=3.0, short_sl_mult=2.0,
             deadzone=cfg['deadzone'],
@@ -226,6 +232,7 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
         val_env = TradingRLEnv(
             val_embeddings, val_df,
             probabilities=val_probs,
+            ev_probabilities=val_ev_probs,
             long_tp_mult=3.0, long_sl_mult=2.0,
             short_tp_mult=3.0, short_sl_mult=2.0,
             deadzone=cfg['deadzone'],
@@ -325,6 +332,7 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
         test_env = TradingRLEnv(
             test_embeddings, test_df,
             probabilities=test_probs,
+            ev_probabilities=test_ev_probs,
             long_tp_mult=3.0, long_sl_mult=2.0,
             short_tp_mult=3.0, short_sl_mult=2.0,
             deadzone=champion_config['deadzone'],
@@ -381,24 +389,17 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
         PerformanceMetrics.plot_results(test_results, save_path=str(viz_path))
         print(f"Champion Test Backtest visualization saved to {viz_path}")
         
-    # Benchmark against Deterministic Rule Agent on the same test split
+    # Benchmark against Deterministic Rule Agents on the same test split (no RL)
     try:
         from baselines import run_deterministic_baseline
-        run_deterministic_baseline(test_embeddings, test_df, probabilities=test_probs, be_trigger_mult=1.2, split_name="Held-Out Test")
+        run_deterministic_baseline(test_embeddings, test_df, probabilities=test_probs, ev_probabilities=test_ev_probs,
+                                   be_trigger_mult=1.2, split_name="Held-Out Test", use_ev=False)
+        run_deterministic_baseline(test_embeddings, test_df, probabilities=test_probs, ev_probabilities=test_ev_probs,
+                                   be_trigger_mult=1.2, split_name="Held-Out Test", use_ev=True, min_ev_r=0.0)
     except Exception as e:
-        print(f"Deterministic baseline check: {e}")
+        print(f"Deterministic baseline check failed: {e}")
         
     return df_val_leaderboard
-    print("="*80)
-    print(f"Leaderboard saved to {csv_path}")
-    
-    if champion_config is not None and champion_results_df is not None:
-        print(f"\nFinalizing Champion Backtest: {champion_config['name']}")
-        viz_path = results_dir / "backtest_results.png"
-        PerformanceMetrics.plot_results(champion_results_df, save_path=str(viz_path))
-        print(f"Backtest visualization saved to {viz_path}")
-    
-    return df_leaderboard
 
 
 if __name__ == "__main__":

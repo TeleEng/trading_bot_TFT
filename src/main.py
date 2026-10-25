@@ -19,7 +19,7 @@ import random
 import torch
 from data_downloader import download_histdata, TICKERS, START_YEAR, END_YEAR, DATA_PATH
 from preprocess import process_all_data, OUTPUT_PATH
-from model import PricePredictor
+from model import PricePredictor, DROP_COLS
 from environment import TradingEnvironment
 from backtest import Backtester
 from performance import PerformanceMetrics
@@ -131,7 +131,7 @@ def main():
         file_1w = Path(OUTPUT_PATH) / f"{MAIN_ASSET}_master_1w.csv"
         
         if not file_1h.exists() or args.force_retrain:
-            print("\n[Phase 1] Processing MTF data with balanced 1.5:1 Triple Barrier labels...")
+            print("\n[Phase 1] Processing MTF data with 3.0x/2.0x ATR Triple Barrier labels (96-bar horizon)...")
             process_all_data()
             
         df_1h = pd.read_csv(file_1h, index_col=0, parse_dates=True)
@@ -186,11 +186,15 @@ def main():
     train_prob_path = models_dir / "train_probabilities.npy"
     val_prob_path = models_dir / "val_probabilities.npy"
     test_prob_path = models_dir / "test_probabilities.npy"
+    train_ev_prob_path = models_dir / "train_ev_probabilities.npy"
+    val_ev_prob_path = models_dir / "val_ev_probabilities.npy"
+    test_ev_prob_path = models_dir / "test_ev_probabilities.npy"
     
-    embeddings_cached = (
-        train_emb_path.exists() and val_emb_path.exists() and test_emb_path.exists()
-        and train_prob_path.exists() and val_prob_path.exists() and test_prob_path.exists()
-    )
+    embeddings_cached = all(p.exists() for p in [
+        train_emb_path, val_emb_path, test_emb_path,
+        train_prob_path, val_prob_path, test_prob_path,
+        train_ev_prob_path, val_ev_prob_path, test_ev_prob_path,
+    ])
     
     if embeddings_cached and not args.force_retrain:
         print("\n[INFO] Found cached embeddings and probabilities on disk! Loading...")
@@ -200,6 +204,9 @@ def main():
         train_probabilities = np.load(train_prob_path)
         val_probabilities = np.load(val_prob_path)
         test_probabilities = np.load(test_prob_path)
+        train_ev_probabilities = np.load(train_ev_prob_path)
+        val_ev_probabilities = np.load(val_ev_prob_path)
+        test_ev_probabilities = np.load(test_ev_prob_path)
         print(f"  Loaded Train Embeddings: {train_embeddings.shape}, Probs: {train_probabilities.shape}")
         print(f"  Loaded Val Embeddings:   {val_embeddings.shape}, Probs: {val_probabilities.shape}")
         print(f"  Loaded Test Embeddings:  {test_embeddings.shape}, Probs: {test_probabilities.shape}")
@@ -213,8 +220,7 @@ def main():
         # Check if saved model checkpoints exist
         if long_model_path.exists() and short_model_path.exists() and not args.force_retrain:
             print("\n[INFO] Found saved TFT model checkpoints! Loading weights...")
-            drop_cols = ['target_long', 'target_short', 'target', 'Open', 'High', 'Low', 'Close', 'Volume']
-            input_size = train_1h.drop(columns=drop_cols, errors='ignore').shape[1]
+            input_size = train_1h.drop(columns=DROP_COLS, errors='ignore').shape[1]
             model_long.load(str(long_model_path), input_size=input_size)
             model_short.load(str(short_model_path), input_size=input_size)
         else:
@@ -257,17 +263,19 @@ def main():
         test_emb_s = model_short.predict_batch_embeddings(test_dfs)
         test_embeddings = np.concatenate([test_emb_l, test_emb_s], axis=1)
 
-        train_prob_l = model_long.predict_batch_calibrated(train_dfs)[:, 1]
-        train_prob_s = model_short.predict_batch_calibrated(train_dfs)[:, 1]
-        train_probabilities = np.column_stack([train_prob_l, train_prob_s])
+        # Balanced (prior-corrected, 0.50 == validation base rate) -> PPO observations + confidence/edge gates
+        # True calibrated P(TP hit)                                 -> EV-in-R gate only
+        def _calibrated_pair(dfs, balanced):
+            p_l = model_long.predict_batch_calibrated(dfs, balanced=balanced)[:, 1]
+            p_s = model_short.predict_batch_calibrated(dfs, balanced=balanced)[:, 1]
+            return np.column_stack([p_l, p_s])
 
-        val_prob_l = model_long.predict_batch_calibrated(val_dfs)[:, 1]
-        val_prob_s = model_short.predict_batch_calibrated(val_dfs)[:, 1]
-        val_probabilities = np.column_stack([val_prob_l, val_prob_s])
-
-        test_prob_l = model_long.predict_batch_calibrated(test_dfs)[:, 1]
-        test_prob_s = model_short.predict_batch_calibrated(test_dfs)[:, 1]
-        test_probabilities = np.column_stack([test_prob_l, test_prob_s])
+        train_probabilities = _calibrated_pair(train_dfs, balanced=True)
+        val_probabilities = _calibrated_pair(val_dfs, balanced=True)
+        test_probabilities = _calibrated_pair(test_dfs, balanced=True)
+        train_ev_probabilities = _calibrated_pair(train_dfs, balanced=False)
+        val_ev_probabilities = _calibrated_pair(val_dfs, balanced=False)
+        test_ev_probabilities = _calibrated_pair(test_dfs, balanced=False)
 
         np.save(train_emb_path, train_embeddings)
         np.save(val_emb_path, val_embeddings)
@@ -275,10 +283,17 @@ def main():
         np.save(train_prob_path, train_probabilities)
         np.save(val_prob_path, val_probabilities)
         np.save(test_prob_path, test_probabilities)
+        np.save(train_ev_prob_path, train_ev_probabilities)
+        np.save(val_ev_prob_path, val_ev_probabilities)
+        np.save(test_ev_prob_path, test_ev_probabilities)
         print("Embeddings & probabilities successfully cached to disk!")
 
     # Evaluate Backbone Probability Distribution & Empirical Edge Calibration
-    evaluate_probability_calibration(test_df_aligned, test_probabilities, split_name="Held-Out Test Split")
+    evaluate_probability_calibration(test_df_aligned, test_probabilities, split_name="Held-Out Test Split (Balanced Probs)")
+    print(f"  [TRUE CALIBRATED P(TP)] Test mean p_long: {np.mean(test_ev_probabilities[:, 0]):.4f} | "
+          f"mean p_short: {np.mean(test_ev_probabilities[:, 1]):.4f} | "
+          f"bars with p > 0.40 (3:2 EV breakeven) -> long: {(test_ev_probabilities[:, 0] > 0.40).mean()*100:.1f}% | "
+          f"short: {(test_ev_probabilities[:, 1] > 0.40).mean()*100:.1f}%")
 
     # Check if user requested Grid Search
     if args.grid_search:
@@ -289,10 +304,13 @@ def main():
             train_probs=train_probabilities,
             val_probs=val_probabilities,
             test_probs=test_probabilities,
-            timesteps_per_config=args.timesteps
+            timesteps_per_config=args.timesteps,
+            train_ev_probs=train_ev_probabilities,
+            val_ev_probs=val_ev_probabilities,
+            test_ev_probs=test_ev_probabilities
         )
         print("\n" + "="*60)
-        print("GRID SEARCH COMPLETE! Results saved to results/rl_search_results.csv")
+        print("GRID SEARCH COMPLETE! Results saved to results/rl_val_search_results.csv & results/rl_test_champion.csv")
         print("="*60)
         return
 
@@ -302,12 +320,13 @@ def main():
     train_env = TradingRLEnv(
         train_embeddings, train_df_aligned,
         probabilities=train_probabilities,
+        ev_probabilities=train_ev_probabilities,
         long_tp_mult=3.0, long_sl_mult=2.0,
         short_tp_mult=3.0, short_sl_mult=2.0,
         deadzone=0.25,
         min_confidence=0.50,
         min_edge=0.01,
-        use_ev_gate=True,
+        use_ev_gate=False,  # EV gate uses TRUE calibrated probs; enable once P(TP) > 0.40 coverage is validated
         min_ev_r=0.0,
         breakeven_sl=True,
         be_trigger_mult=1.2,
@@ -323,12 +342,13 @@ def main():
     val_env = TradingRLEnv(
         val_embeddings, val_df_aligned,
         probabilities=val_probabilities,
+        ev_probabilities=val_ev_probabilities,
         long_tp_mult=3.0, long_sl_mult=2.0,
         short_tp_mult=3.0, short_sl_mult=2.0,
         deadzone=0.25,
         min_confidence=0.50,
         min_edge=0.01,
-        use_ev_gate=True,
+        use_ev_gate=False,  # EV gate uses TRUE calibrated probs; enable once P(TP) > 0.40 coverage is validated
         min_ev_r=0.0,
         breakeven_sl=True,
         be_trigger_mult=1.2,
@@ -387,12 +407,13 @@ def main():
     test_env = TradingRLEnv(
         test_embeddings, test_df_aligned,
         probabilities=test_probabilities,
+        ev_probabilities=test_ev_probabilities,
         long_tp_mult=3.0, long_sl_mult=2.0,
         short_tp_mult=3.0, short_sl_mult=2.0,
         deadzone=0.25,
         min_confidence=0.50,
         min_edge=0.01,
-        use_ev_gate=True,
+        use_ev_gate=False,  # EV gate uses TRUE calibrated probs; enable once P(TP) > 0.40 coverage is validated
         min_ev_r=0.0,
         breakeven_sl=True,
         be_trigger_mult=1.2,
@@ -449,8 +470,19 @@ def main():
     run_deterministic_baseline(
         test_embeddings, test_df_aligned,
         probabilities=test_probabilities,
+        ev_probabilities=test_ev_probabilities,
         be_trigger_mult=1.2,
-        split_name="Held-Out Test Split"
+        split_name="Held-Out Test Split",
+        use_ev=False
+    )
+    run_deterministic_baseline(
+        test_embeddings, test_df_aligned,
+        probabilities=test_probabilities,
+        ev_probabilities=test_ev_probabilities,
+        be_trigger_mult=1.2,
+        split_name="Held-Out Test Split",
+        use_ev=True,
+        min_ev_r=0.0
     )
 
     print("\n" + "="*60)

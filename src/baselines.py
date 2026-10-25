@@ -33,13 +33,16 @@ class DeterministicRuleAgent:
         if env.prob_long is None or env.prob_short is None:
             return 0.0
             
+        # Balanced (prior-corrected) probabilities for the edge rule; TRUE calibrated ones for EV.
         p_l = float(env.prob_long[step])
         p_s = float(env.prob_short[step])
+        ev_p_l = float(env.ev_prob_long[step]) if getattr(env, 'ev_prob_long', None) is not None else p_l
+        ev_p_s = float(env.ev_prob_short[step]) if getattr(env, 'ev_prob_short', None) is not None else p_s
         atr = float(env.atr_values[step])
         cost_in_r = (env.spread + env.slippage) / max(1e-5, atr)
         
-        ev_l = p_l * env.long_tp_mult - (1.0 - p_l) * env.long_sl_mult - cost_in_r
-        ev_s = p_s * env.short_tp_mult - (1.0 - p_s) * env.short_sl_mult - cost_in_r
+        ev_l = ev_p_l * env.long_tp_mult - (1.0 - ev_p_l) * env.long_sl_mult - cost_in_r
+        ev_s = ev_p_s * env.short_tp_mult - (1.0 - ev_p_s) * env.short_sl_mult - cost_in_r
         
         if self.use_ev:
             if ev_l > self.min_ev_r and ev_l > ev_s:
@@ -55,11 +58,17 @@ class DeterministicRuleAgent:
             return 0.0
 
 
-def run_deterministic_baseline(embeddings, df, probabilities=None, be_trigger_mult=1.2, split_name="Held-Out Test"):
-    """Runs the deterministic rule agent on the specified split."""
+def run_deterministic_baseline(embeddings, df, probabilities=None, be_trigger_mult=1.2, split_name="Held-Out Test",
+                               ev_probabilities=None, use_ev=False, min_ev_r=0.0):
+    """Runs the deterministic rule agent on the specified split.
+
+    use_ev=False -> balanced-probability confidence/edge rule (same gate semantics as the PPO configs).
+    use_ev=True  -> EV-in-R rule on TRUE calibrated probabilities (ev_probabilities).
+    """
     env = TradingRLEnv(
         embeddings, df,
         probabilities=probabilities,
+        ev_probabilities=ev_probabilities,
         long_tp_mult=3.0, long_sl_mult=2.0,
         short_tp_mult=3.0, short_sl_mult=2.0,
         deadzone=0.20,
@@ -68,11 +77,14 @@ def run_deterministic_baseline(embeddings, df, probabilities=None, be_trigger_mu
         volatility_filter=True,
         trend_filter=True,
         cooldown_bars=4,
+        use_ev_gate=use_ev,
+        min_ev_r=min_ev_r,
         max_wait_bars=96,
         is_eval=True
     )
     
-    agent = DeterministicRuleAgent(min_edge=0.01, min_confidence=0.50, use_ev=True, min_ev_r=0.0)
+    agent = DeterministicRuleAgent(min_edge=0.01, min_confidence=0.50, use_ev=use_ev, min_ev_r=min_ev_r)
+    rule_name = f"EV-in-R > {min_ev_r:+.2f}" if use_ev else "Balanced Prob Edge >= 0.01"
     obs, _ = env.reset()
     done = False
     records = []
@@ -97,7 +109,7 @@ def run_deterministic_baseline(embeddings, df, probabilities=None, be_trigger_mu
     metrics = PerformanceMetrics.calculate_metrics(results_df, initial_capital=10000)
     
     print("\n" + "="*70)
-    print(f"BENCHMARK BASELINE: DETERMINISTIC RULE AGENT (NO RL) [{split_name.upper()}]")
+    print(f"BENCHMARK BASELINE: DETERMINISTIC RULE AGENT (NO RL) [{split_name.upper()}] | Rule: {rule_name}")
     print("="*70)
     print(f"  Trades: {env.total_trades} | Return: {metrics.get('Total Return (%)', 0.0):.2f}% | Sharpe: {metrics.get('Sharpe Ratio', 0.0):.2f} | WinRate: {metrics.get('Win Rate (%)', 0.0):.1f}% | PF: {metrics.get('Profit Factor', 0.0):.2f}")
     env.print_funnel_report()

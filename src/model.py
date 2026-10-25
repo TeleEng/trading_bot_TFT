@@ -10,6 +10,11 @@ import os
 from pathlib import Path
 import gc
 
+# Single source of truth for non-feature columns removed before sequence creation.
+# Raw ATR / SMA_ATR_50 are non-stationary; sin/cos are collinear with Hour/DayOfWeek embeddings.
+DROP_COLS = ['target_long', 'target_short', 'target', 'Open', 'High', 'Low', 'Close', 'Volume',
+             'ATR', 'SMA_ATR_50', 'hour_sin', 'hour_cos', 'day_sin', 'day_cos']
+
 
 class GLU(nn.Module):
     def __init__(self, input_size):
@@ -181,15 +186,28 @@ class ProbabilityCalibrator:
     """
     Platt Scaling (logistic probability calibration: P(y=1|p) = sigmoid(a * logit(p) + b)).
     Monotonic, preserves ranking, and aligns model outputs with empirical validation base rates.
+
+    Two output spaces are exposed:
+      - predict(p)            -> TRUE calibrated probability P(TP hit) (use for EV-in-R maths).
+      - predict_balanced(p)   -> PRIOR-CORRECTED probability where 0.50 == validation base rate.
+                                 logit(p_bal) = logit(p_cal) - logit(base_rate)
+                                 Long and short brains become directly comparable (no base-rate
+                                 offset), so min_confidence=0.50 / min_edge gates measure LIFT.
     """
     def __init__(self):
         self.a = 1.0
         self.b = 0.0
+        self.base_rate = 0.5
+
+    @staticmethod
+    def _logit(p):
+        p = np.clip(p, 1e-6, 1.0 - 1e-6)
+        return np.log(p / (1.0 - p))
 
     def fit(self, probs, labels):
-        p = np.clip(probs, 1e-6, 1.0 - 1e-6)
-        logits = np.log(p / (1.0 - p))
+        logits = self._logit(probs)
         y = np.array(labels, dtype=np.float64)
+        self.base_rate = float(np.clip(np.mean(y), 1e-4, 1.0 - 1e-4))
         
         try:
             from sklearn.linear_model import LogisticRegression
@@ -199,13 +217,15 @@ class ProbabilityCalibrator:
             self.b = float(clf.intercept_[0])
         except Exception:
             self.a = 1.0
-            base_rate = float(np.mean(y))
-            self.b = float(np.log(base_rate / max(1e-6, 1.0 - base_rate)))
+            self.b = float(np.log(self.base_rate / (1.0 - self.base_rate)))
 
     def predict(self, probs):
-        p = np.clip(probs, 1e-6, 1.0 - 1e-6)
-        logits = np.log(p / (1.0 - p))
-        z = self.a * logits + self.b
+        z = self.a * self._logit(probs) + self.b
+        return 1.0 / (1.0 + np.exp(-z))
+
+    def predict_balanced(self, probs):
+        base_rate = getattr(self, 'base_rate', 0.5)
+        z = self.a * self._logit(probs) + self.b - float(self._logit(base_rate))
         return 1.0 / (1.0 + np.exp(-z))
 
 
@@ -221,14 +241,13 @@ class PricePredictor:
         import copy
         self.copy = copy
         self.history = {'train_loss': [], 'val_loss': []}
-        self.augmenter = TimeSeriesAugmenter(self.device)
         self.mean_1h = None; self.std_1h = None
         self.mean_4h = None; self.std_4h = None
         self.mean_1d = None; self.std_1d = None
         self.mean_1w = None; self.std_1w = None
 
     def create_sequences(self, df_1h, df_4h, df_1d, df_1w, fit_scaler=False, target_col='target_long'):
-        drop_cols = ['target_long', 'target_short', 'target', 'Open', 'High', 'Low', 'Close', 'Volume', 'ATR', 'SMA_ATR_50', 'hour_sin', 'hour_cos', 'day_sin', 'day_cos']
+        drop_cols = DROP_COLS
         raw_1h = df_1h.drop(columns=drop_cols, errors='ignore')
         raw_4h = df_4h.drop(columns=drop_cols, errors='ignore')
         raw_1d = df_1d.drop(columns=drop_cols, errors='ignore')
@@ -360,7 +379,7 @@ class PricePredictor:
         
         # Identify Categorical Indices
         cat_cols = ['Hour', 'DayOfWeek']
-        drop_cols = ['target_long', 'target_short', 'target', 'Open', 'High', 'Low', 'Close', 'Volume', 'ATR', 'SMA_ATR_50', 'hour_sin', 'hour_cos', 'day_sin', 'day_cos']
+        drop_cols = DROP_COLS
         clean_cols = df_1h_t.drop(columns=drop_cols, errors='ignore').columns
         cat_indices = [clean_cols.get_loc(c) for c in cat_cols if c in clean_cols]
 
@@ -537,15 +556,25 @@ class PricePredictor:
         y_val = aligned_df[target_col].values
         self.calibrator = ProbabilityCalibrator()
         self.calibrator.fit(raw_probs, y_val)
-        print(f"  [{target_col.upper()}] Platt Calibrator fitted: a={self.calibrator.a:.4f}, b={self.calibrator.b:.4f} (Base Rate: {np.mean(y_val)*100:.1f}%)")
+        cal = self.calibrator.predict(raw_probs)
+        bal = self.calibrator.predict_balanced(raw_probs)
+        print(f"  [{target_col.upper()}] Platt Calibrator fitted: a={self.calibrator.a:.4f}, b={self.calibrator.b:.4f} (Base Rate: {self.calibrator.base_rate*100:.1f}%)")
+        print(f"    Raw mean: {np.mean(raw_probs):.4f} | True-calibrated mean: {np.mean(cal):.4f} | Balanced (0.5 = base rate) mean: {np.mean(bal):.4f} | Balanced >0.5: {(bal > 0.5).mean()*100:.1f}% of bars")
 
-    def predict_batch_calibrated(self, dfs, batch_size=512):
-        """Returns (N, 2) calibrated probabilities [P(0), P(1)]."""
+    def predict_batch_calibrated(self, dfs, batch_size=512, balanced=False):
+        """Returns (N, 2) calibrated probabilities [P(0), P(1)].
+
+        balanced=False -> true calibrated P(TP hit), for EV-in-R calculations.
+        balanced=True  -> prior-corrected probability (0.50 == validation base rate), for gating/obs.
+        """
         raw_probs = self.predict_batch_classified(dfs, batch_size)[:, 1]
-        if hasattr(self, 'calibrator') and self.calibrator is not None:
-            cal_p1 = self.calibrator.predict(raw_probs)
+        if getattr(self, 'calibrator', None) is not None:
+            if balanced:
+                cal_p1 = self.calibrator.predict_balanced(raw_probs)
+            else:
+                cal_p1 = self.calibrator.predict(raw_probs)
             return np.column_stack([1.0 - cal_p1, cal_p1])
-        return self.predict_batch_classified(dfs, batch_size)
+        return np.column_stack([1.0 - raw_probs, raw_probs])
 
     def save(self, path):
         base_model = self.model.module if isinstance(self.model, nn.DataParallel) else self.model
@@ -558,11 +587,14 @@ class PricePredictor:
                 'mean_1d': self.mean_1d, 'std_1d': self.std_1d,
                 'mean_1w': self.mean_1w, 'std_1w': self.std_1w,
             },
-            'calibrator': getattr(self, 'calibrator', None)
+            'calibrator': ({'a': self.calibrator.a, 'b': self.calibrator.b,
+                            'base_rate': getattr(self.calibrator, 'base_rate', 0.5)}
+                           if getattr(self, 'calibrator', None) is not None else None)
         }, path)
 
     def load(self, path, input_size):
-        checkpoint = torch.load(path, map_location=self.device)
+        # weights_only=False: checkpoint stores NumPy scaler arrays (PyTorch >= 2.6 defaults to weights_only=True)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         cat_indices = checkpoint.get('cat_indices', [])
         scalers = checkpoint.get('scalers', {})
         self.mean_1h = scalers.get('mean_1h', None)
@@ -573,7 +605,14 @@ class PricePredictor:
         self.std_1d = scalers.get('std_1d', None)
         self.mean_1w = scalers.get('mean_1w', None)
         self.std_1w = scalers.get('std_1w', None)
-        self.calibrator = checkpoint.get('calibrator', None)
+        cal_state = checkpoint.get('calibrator', None)
+        if isinstance(cal_state, dict):
+            self.calibrator = ProbabilityCalibrator()
+            self.calibrator.a = float(cal_state.get('a', 1.0))
+            self.calibrator.b = float(cal_state.get('b', 0.0))
+            self.calibrator.base_rate = float(cal_state.get('base_rate', 0.5))
+        else:
+            self.calibrator = cal_state
         
         self.model = MultiTimeframeTFT(
             input_size=input_size, 

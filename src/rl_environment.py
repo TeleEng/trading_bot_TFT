@@ -16,6 +16,7 @@ class TradingRLEnv(gym.Env):
     """
     def __init__(self, embeddings, df, 
                  probabilities=None,
+                 ev_probabilities=None,
                  long_tp_mult=3.0, long_sl_mult=2.0, 
                  short_tp_mult=3.0, short_sl_mult=2.0, 
                  initial_capital=10000,
@@ -72,12 +73,20 @@ class TradingRLEnv(gym.Env):
         self.rsi = self.df['RSI'].values if 'RSI' in self.df.columns else None
         
         # Extract probabilities if available
+        # `probabilities`    -> prior-corrected (0.50 == base rate) values for obs + confidence/edge gating.
+        # `ev_probabilities` -> TRUE calibrated P(TP hit) values for EV-in-R gating (falls back to `probabilities`).
         if probabilities is not None and len(probabilities) > 0:
             self.prob_long = probabilities[:, 0]
             self.prob_short = probabilities[:, 1]
         else:
             self.prob_long = None
             self.prob_short = None
+        if ev_probabilities is not None and len(ev_probabilities) > 0:
+            self.ev_prob_long = ev_probabilities[:, 0]
+            self.ev_prob_short = ev_probabilities[:, 1]
+        else:
+            self.ev_prob_long = self.prob_long
+            self.ev_prob_short = self.prob_short
         
         self.long_tp_mult = long_tp_mult
         self.long_sl_mult = long_sl_mult
@@ -502,8 +511,10 @@ class TradingRLEnv(gym.Env):
                     p_s = float(self.prob_short[self.current_step])
                     
                     cost_in_r = (self.spread + self.slippage) / max(1e-5, atr)
-                    ev_long = p_l * self.long_tp_mult - (1.0 - p_l) * self.long_sl_mult - cost_in_r
-                    ev_short = p_s * self.short_tp_mult - (1.0 - p_s) * self.short_sl_mult - cost_in_r
+                    ev_p_l = float(self.ev_prob_long[self.current_step]) if self.ev_prob_long is not None else p_l
+                    ev_p_s = float(self.ev_prob_short[self.current_step]) if self.ev_prob_short is not None else p_s
+                    ev_long = ev_p_l * self.long_tp_mult - (1.0 - ev_p_l) * self.long_sl_mult - cost_in_r
+                    ev_short = ev_p_s * self.short_tp_mult - (1.0 - ev_p_s) * self.short_sl_mult - cost_in_r
 
                     if desired_direction > 0:
                         if self.use_ev_gate:
