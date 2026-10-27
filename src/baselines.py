@@ -58,7 +58,7 @@ class DeterministicRuleAgent:
             return 0.0
 
 
-def run_deterministic_baseline(embeddings, df, probabilities=None, be_trigger_mult=1.2, split_name="Held-Out Test",
+def run_deterministic_baseline(embeddings, df, probabilities=None, breakeven_sl=False, be_trigger_mult=1.2, split_name="Held-Out Test",
                                ev_probabilities=None, use_ev=False, min_ev_r=0.0):
     """Runs the deterministic rule agent on the specified split.
 
@@ -72,7 +72,7 @@ def run_deterministic_baseline(embeddings, df, probabilities=None, be_trigger_mu
         long_tp_mult=3.0, long_sl_mult=2.0,
         short_tp_mult=3.0, short_sl_mult=2.0,
         deadzone=0.20,
-        breakeven_sl=True,
+        breakeven_sl=breakeven_sl,
         be_trigger_mult=be_trigger_mult,
         volatility_filter=True,
         trend_filter=True,
@@ -84,7 +84,8 @@ def run_deterministic_baseline(embeddings, df, probabilities=None, be_trigger_mu
     )
     
     agent = DeterministicRuleAgent(min_edge=0.01, min_confidence=0.50, use_ev=use_ev, min_ev_r=min_ev_r)
-    rule_name = f"EV-in-R > {min_ev_r:+.2f}" if use_ev else "Balanced Prob Edge >= 0.01"
+    be_tag = f"BE={be_trigger_mult:.1f}x" if breakeven_sl else "NoBE"
+    rule_name = f"EV-in-R > {min_ev_r:+.2f} ({be_tag})" if use_ev else f"Balanced Prob Edge >= 0.01 ({be_tag})"
     obs, _ = env.reset()
     done = False
     records = []
@@ -115,3 +116,70 @@ def run_deterministic_baseline(embeddings, df, probabilities=None, be_trigger_mu
     env.print_funnel_report()
     env.print_exit_and_cost_report()
     return metrics, results_df
+
+
+def run_random_baseline(embeddings, df, breakeven_sl=False, be_trigger_mult=1.2,
+                        trade_prob=0.15, n_seeds=5, split_name="Held-Out Test"):
+    """Runs a zero-skill Random Entry benchmark across multiple seeds under identical filters, barriers, and costs."""
+    seed_metrics = []
+    be_tag = f"BE={be_trigger_mult:.1f}x" if breakeven_sl else "NoBE"
+
+    for seed in range(n_seeds):
+        rng = np.random.default_rng(1000 + seed)
+        # Pass probabilities=None so only the structural regime filters (Trend, Volatility, Cooldown) and barriers apply
+        env = TradingRLEnv(
+            embeddings, df,
+            probabilities=None,
+            long_tp_mult=3.0, long_sl_mult=2.0,
+            short_tp_mult=3.0, short_sl_mult=2.0,
+            deadzone=0.20,
+            breakeven_sl=breakeven_sl,
+            be_trigger_mult=be_trigger_mult,
+            volatility_filter=True,
+            trend_filter=True,
+            cooldown_bars=4,
+            use_ev_gate=False,
+            max_wait_bars=96,
+            is_eval=True
+        )
+        obs, _ = env.reset()
+        done = False
+        records = []
+        while not done:
+            step_idx = env.current_step
+            timestamp = env.df.index[step_idx]
+            close_price = env.close_prices[step_idx]
+            if env.position == 0 and rng.random() < trade_prob:
+                action = 1.0 if rng.random() < 0.5 else -1.0
+            else:
+                action = 0.0
+            obs, reward, terminated, truncated, info = env.step(np.array([action]))
+            done = terminated or truncated
+            records.append({
+                'timestamp': timestamp,
+                'price': close_price,
+                'position': env.position,
+                'portfolio_value': env.portfolio_value
+            })
+        res_df = pd.DataFrame(records)
+        m = PerformanceMetrics.calculate_metrics(res_df, initial_capital=10000)
+        exp_r = float(np.mean(env.trade_r_multiples)) if len(env.trade_r_multiples) > 0 else 0.0
+        seed_metrics.append({
+            'trades': env.total_trades,
+            'return': m.get('Total Return (%)', 0.0),
+            'sharpe': m.get('Sharpe Ratio', 0.0),
+            'win_rate': m.get('Win Rate (%)', 0.0),
+            'pf': m.get('Profit Factor', 0.0),
+            'exp_r': exp_r,
+            'costs': env.total_Friction_costs_usd
+        })
+
+    df_m = pd.DataFrame(seed_metrics)
+    print("\n" + "="*70)
+    print(f"ZERO-SKILL BENCHMARK: RANDOM ENTRY AGENT ({n_seeds} SEEDS MEAN ± STD) [{split_name.upper()}] | {be_tag}")
+    print("="*70)
+    print(f"  Trades:   {df_m['trades'].mean():.1f} ± {df_m['trades'].std():.1f}")
+    print(f"  Return:   {df_m['return'].mean():+.2f}% ± {df_m['return'].std():.2f}% (Range: [{df_m['return'].min():+.2f}%, {df_m['return'].max():+.2f}%])")
+    print(f"  Sharpe:   {df_m['sharpe'].mean():+.2f} ± {df_m['sharpe'].std():.2f}")
+    print(f"  WinRate:  {df_m['win_rate'].mean():.1f}% ± {df_m['win_rate'].std():.1f}% | PF: {df_m['pf'].mean():.2f} | Expectancy: {df_m['exp_r'].mean():+.3f}R | Mean Costs: ${df_m['costs'].mean():,.2f}")
+    return df_m

@@ -5,7 +5,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
-from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score
+from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score, roc_auc_score
 import os
 from pathlib import Path
 import gc
@@ -152,10 +152,11 @@ class MultiTimeframeTFT(nn.Module):
         return norm_layer(x_grn + lstm_out)
 
     def forward(self, x_1h, x_4h, x_1d, x_1w):
+        # Restrict higher-timeframe sequence lengths to prevent 52-week/52-day calendar timestamp memorization
         out_1h = self.process_branch(x_1h, self.grn_1h, self.lstm_1h, self.branch_norm_1h)
-        out_4h = self.process_branch(x_4h, self.grn_4h, self.lstm_4h, self.branch_norm_4h)
-        out_1d = self.process_branch(x_1d, self.grn_1d, self.lstm_1d, self.branch_norm_1d)
-        out_1w = self.process_branch(x_1w, self.grn_1w, self.lstm_1w, self.branch_norm_1w)
+        out_4h = self.process_branch(x_4h[:, -12:, :], self.grn_4h, self.lstm_4h, self.branch_norm_4h)
+        out_1d = self.process_branch(x_1d[:, -10:, :], self.grn_1d, self.lstm_1d, self.branch_norm_1d)
+        out_1w = self.process_branch(x_1w[:, -8:, :], self.grn_1w, self.lstm_1w, self.branch_norm_1w)
         
         # Positional Encoding + Attention
         out_1h_pos = self.pos_encoder(out_1h)
@@ -219,6 +220,12 @@ class ProbabilityCalibrator:
             self.a = 1.0
             self.b = float(np.log(self.base_rate / (1.0 - self.base_rate)))
 
+        # Bayesian shrinkage: never allow a negative slope (a < 0) to invert predictions out-of-sample
+        self.raw_a = self.a
+        if self.a <= 0.0:
+            self.a = 0.0
+            self.b = float(np.log(self.base_rate / (1.0 - self.base_rate)))
+
     def predict(self, probs):
         z = self.a * self._logit(probs) + self.b
         return 1.0 / (1.0 + np.exp(-z))
@@ -230,7 +237,7 @@ class ProbabilityCalibrator:
 
 
 class PricePredictor:
-    def __init__(self, input_chunk_length=52, hidden_size=128, num_layers=2, num_classes=2):
+    def __init__(self, input_chunk_length=52, hidden_size=64, num_layers=1, num_classes=2):
         self.input_chunk_length = input_chunk_length
         self.hidden_size = hidden_size
         self.num_layers = num_layers
@@ -238,6 +245,8 @@ class PricePredictor:
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.calibrator = None
         self.model = None
+        self.gbdt_model = None
+        self.prob_source = 'tft'
         import copy
         self.copy = copy
         self.history = {'train_loss': [], 'val_loss': []}
@@ -245,6 +254,46 @@ class PricePredictor:
         self.mean_4h = None; self.std_4h = None
         self.mean_1d = None; self.std_1d = None
         self.mean_1w = None; self.std_1w = None
+
+    @staticmethod
+    def create_tabular_features(X1, X4, X1d, X1w):
+        """Extracts non-memorizing multi-timeframe summary features for GBDT signal benchmarking."""
+        if len(X1) == 0:
+            return np.empty((0, 1), dtype=np.float32)
+        f_1h_curr = X1[:, -1, :]
+        f_1h_diff4 = X1[:, -1, :] - X1[:, -5, :]
+        f_1h_diff12 = X1[:, -1, :] - X1[:, -13, :]
+        f_1h_mean12 = np.mean(X1[:, -12:, :], axis=1)
+        f_4h_curr = X4[:, -1, :]
+        f_4h_diff3 = X4[:, -1, :] - X4[:, -4, :]
+        f_1d_curr = X1d[:, -1, :]
+        f_1w_curr = X1w[:, -1, :]
+        return np.hstack([
+            f_1h_curr, f_1h_diff4, f_1h_diff12, f_1h_mean12,
+            f_4h_curr, f_4h_diff3, f_1d_curr, f_1w_curr
+        ]).astype(np.float32)
+
+    @staticmethod
+    def _block_bootstrap_auc(y_true, y_prob, block_size=96, n_boot=200, seed=42):
+        """Computes 96-bar block-bootstrap 95% confidence interval for ROC-AUC."""
+        y_true = np.asarray(y_true)
+        y_prob = np.asarray(y_prob)
+        n = len(y_true)
+        if n < block_size * 2 or len(np.unique(y_true)) < 2:
+            return 0.50, 0.50, 0.50
+        base_auc = float(roc_auc_score(y_true, y_prob))
+        rng = np.random.default_rng(seed)
+        n_blocks = max(2, n // block_size)
+        max_start = max(1, n - block_size)
+        aucs = []
+        for _ in range(n_boot):
+            starts = rng.integers(0, max_start, size=n_blocks)
+            idx = np.concatenate([np.arange(s, s + block_size) for s in starts])[:n]
+            if len(np.unique(y_true[idx])) == 2:
+                aucs.append(float(roc_auc_score(y_true[idx], y_prob[idx])))
+        if not aucs:
+            return base_auc, base_auc, base_auc
+        return base_auc, float(np.percentile(aucs, 2.5)), float(np.percentile(aucs, 97.5))
 
     def create_sequences(self, df_1h, df_4h, df_1d, df_1w, fit_scaler=False, target_col='target_long'):
         drop_cols = DROP_COLS
@@ -356,24 +405,26 @@ class PricePredictor:
                 valid_mask[i] = True
         return df_1h.iloc[valid_mask]
 
-    def train(self, dfs_train, dfs_val, target_col='target_long', epochs=50, batch_size=256, patience=20, active_augs=None):
+    def train(self, dfs_train, dfs_val, target_col='target_long', epochs=50, batch_size=256, patience=10, train_stride=4, active_augs=None):
         df_1h_t, df_4h_t, df_1d_t, df_1w_t = dfs_train
         df_1h_v, df_4h_v, df_1d_v, df_1w_v = dfs_val
 
-        X1_t, X4_t, X1d_t, X1w_t, y_t = self.create_sequences(df_1h_t, df_4h_t, df_1d_t, df_1w_t, fit_scaler=True, target_col=target_col)
-        X1_v, X4_v, X1d_v, X1w_v, y_v = self.create_sequences(df_1h_v, df_4h_v, df_1d_v, df_1w_v, fit_scaler=False, target_col=target_col)
+        X1_t_np, X4_t_np, X1d_t_np, X1w_t_np, y_t_np = self.create_sequences(df_1h_t, df_4h_t, df_1d_t, df_1w_t, fit_scaler=True, target_col=target_col)
+        X1_v_np, X4_v_np, X1d_v_np, X1w_v_np, y_v_np = self.create_sequences(df_1h_v, df_4h_v, df_1d_v, df_1w_v, fit_scaler=False, target_col=target_col)
 
-        X1_t = torch.FloatTensor(X1_t).to(self.device)
-        X4_t = torch.FloatTensor(X4_t).to(self.device)
-        X1d_t = torch.FloatTensor(X1d_t).to(self.device)
-        X1w_t = torch.FloatTensor(X1w_t).to(self.device)
-        y_t = torch.LongTensor(y_t).to(self.device)
+        # Subsample overlapping 1H training windows by train_stride to prevent rapid window memorization
+        stride = max(1, int(train_stride))
+        X1_t = torch.FloatTensor(X1_t_np[::stride]).to(self.device)
+        X4_t = torch.FloatTensor(X4_t_np[::stride]).to(self.device)
+        X1d_t = torch.FloatTensor(X1d_t_np[::stride]).to(self.device)
+        X1w_t = torch.FloatTensor(X1w_t_np[::stride]).to(self.device)
+        y_t = torch.LongTensor(y_t_np[::stride]).to(self.device)
         
-        X1_v = torch.FloatTensor(X1_v).to(self.device)
-        X4_v = torch.FloatTensor(X4_v).to(self.device)
-        X1d_v = torch.FloatTensor(X1d_v).to(self.device)
-        X1w_v = torch.FloatTensor(X1w_v).to(self.device)
-        y_v = torch.LongTensor(y_v).to(self.device)
+        X1_v = torch.FloatTensor(X1_v_np).to(self.device)
+        X4_v = torch.FloatTensor(X4_v_np).to(self.device)
+        X1d_v = torch.FloatTensor(X1d_v_np).to(self.device)
+        X1w_v = torch.FloatTensor(X1w_v_np).to(self.device)
+        y_v = torch.LongTensor(y_v_np).to(self.device)
 
         input_size = X1_t.shape[2]
         
@@ -396,14 +447,14 @@ class PricePredictor:
             print(f"Using {torch.cuda.device_count()} GPUs for PyTorch training via DataParallel!")
             self.model = nn.DataParallel(self.model)
 
-        optimizer = optim.Adam(self.model.parameters(), lr=3e-4, weight_decay=1e-3)
+        optimizer = optim.AdamW(self.model.parameters(), lr=1e-4, weight_decay=2e-3)
         scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
         
         train_dataset = torch.utils.data.TensorDataset(X1_t, X4_t, X1d_t, X1w_t, y_t)
         train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, drop_last=True)
         
         val_dataset = torch.utils.data.TensorDataset(X1_v, X4_v, X1d_v, X1w_v, y_v)
-        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=True)
+        val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=batch_size, shuffle=False, drop_last=False)
 
         # Class-weighted cross-entropy to combat imbalance
         label_counts = torch.bincount(y_t, minlength=self.num_classes).float()
@@ -413,10 +464,10 @@ class PricePredictor:
         
         ce_criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=0.05)
         
-        print(f"Class weights: {class_weights.cpu().numpy()}")
-        print("Starting Clean Supervised MTF-TFT Classification Training...")
+        print(f"Class weights: {class_weights.cpu().numpy()} | Training samples (stride={stride}): {len(X1_t):,} | Val samples: {len(X1_v):,}")
+        print("Starting Supervised MTF-TFT Training (Early Stopping on Validation ROC-AUC)...")
         
-        best_val_f1 = -float('inf')
+        best_val_auc = -float('inf')
         patience_counter = 0
         best_model_state = None
 
@@ -445,6 +496,7 @@ class PricePredictor:
             correct = 0
             total_samples = 0
             all_preds = []
+            all_probs = []
             all_labels = []
             val_emb_stds = []
             with torch.no_grad():
@@ -453,16 +505,19 @@ class PricePredictor:
                     loss_ce = ce_criterion(logits_val, b_y)
                     total_val_loss += loss_ce.item()
                     
+                    probs_1 = torch.softmax(logits_val, dim=1)[:, 1]
                     preds = logits_val.argmax(dim=1)
                     correct += (preds == b_y).sum().item()
                     total_samples += b_y.size(0)
                     all_preds.extend(preds.cpu().numpy())
+                    all_probs.extend(probs_1.cpu().numpy())
                     all_labels.extend(b_y.cpu().numpy())
                     val_emb_stds.append(h_val.std(dim=0).mean().item())
                     
             avg_val_loss = total_val_loss / len(val_loader)
             val_acc = correct / total_samples
             val_macro_f1 = f1_score(all_labels, all_preds, average='macro')
+            val_auc = float(roc_auc_score(all_labels, all_probs)) if len(np.unique(all_labels)) == 2 else 0.50
             val_prec_1 = precision_score(all_labels, all_preds, pos_label=1, zero_division=0)
             val_rec_1 = recall_score(all_labels, all_preds, pos_label=1, zero_division=0)
             pred_pos_pct = (np.array(all_preds) == 1).mean() * 100.0
@@ -471,30 +526,77 @@ class PricePredictor:
             self.history['val_loss'].append(avg_val_loss)
             
             if (epoch + 1) % 5 == 0 or epoch == 0:
-                print(f"Epoch {epoch+1:02d}/{epochs:02d} | Train: {avg_train_loss:.4f} | Val: {avg_val_loss:.4f} | F1: {val_macro_f1:.4f} | Acc: {val_acc*100:4.1f}% | PredPos%: {pred_pos_pct:4.1f}% (True: {true_pos_pct:4.1f}%) | Prec: {val_prec_1*100:4.1f}% | Rec: {val_rec_1*100:4.1f}% | EmbStd: {avg_emb_std:.3f}")
+                print(f"Epoch {epoch+1:02d}/{epochs:02d} | Train: {avg_train_loss:.4f} | Val: {avg_val_loss:.4f} | AUC: {val_auc:.4f} | F1: {val_macro_f1:.4f} | Acc: {val_acc*100:4.1f}% | PredPos%: {pred_pos_pct:4.1f}% (True: {true_pos_pct:4.1f}%) | Prec: {val_prec_1*100:4.1f}% | EmbStd: {avg_emb_std:.3f}")
                 
-            # Early stopping check based on Macro F1 (higher is better)
+            # Early stopping check based on threshold-independent Validation ROC-AUC
             import copy
-            if val_macro_f1 > best_val_f1:
-                best_val_f1 = val_macro_f1
+            if val_auc > best_val_auc:
+                best_val_auc = val_auc
                 patience_counter = 0
                 best_model_state = copy.deepcopy(self.model.state_dict())
             else:
                 patience_counter += 1
                 
             if patience_counter >= patience:
-                print(f"Early stopping triggered at epoch {epoch+1}!")
+                print(f"Early stopping triggered at epoch {epoch+1} (patience={patience} on Val AUC)!")
                 if best_model_state is not None:
                     self.model.load_state_dict(best_model_state)
-                    print("Restored best model from early stopping checkpoint (highest Val F1).")
+                    print(f"Restored best TFT model from checkpoint (Best Val AUC: {best_val_auc:.4f}).")
                 break
 
         if best_model_state is not None and patience_counter < patience:
             self.model.load_state_dict(best_model_state)
-            print("Restored best model from early stopping checkpoint (highest Val F1).")
-            
-        print(f"Final Model - Train Loss: {avg_train_loss:.4f} | Val F1: {best_val_f1:.4f}")
-        return avg_train_loss, best_val_f1
+            print(f"Restored best TFT model from checkpoint (Best Val AUC: {best_val_auc:.4f}).")
+
+        # --- Non-Neural GBDT Signal Check & Automatic Backbone Selection ---
+        print(f"\n  [{target_col.upper()}] Running Non-Neural GBDT Signal Check (HistGradientBoosting)...")
+        X_tab_t = self.create_tabular_features(X1_t_np[::stride], X4_t_np[::stride], X1d_t_np[::stride], X1w_t_np[::stride])
+        y_tab_t = y_t_np[::stride]
+        X_tab_v = self.create_tabular_features(X1_v_np, X4_v_np, X1d_v_np, X1w_v_np)
+
+        # Evaluate restored TFT on validation
+        self.model.eval()
+        tft_val_probs = []
+        with torch.no_grad():
+            for b_x1, b_x4, b_x1d, b_x1w, _ in val_loader:
+                _, logits_val = self.model(b_x1, b_x4, b_x1d, b_x1w)
+                tft_val_probs.extend(torch.softmax(logits_val, dim=1)[:, 1].cpu().numpy())
+        tft_val_probs = np.array(tft_val_probs)
+        auc_tft, tft_lo, tft_hi = self._block_bootstrap_auc(y_v_np, tft_val_probs)
+
+        try:
+            from sklearn.ensemble import HistGradientBoostingClassifier
+            self.gbdt_model = HistGradientBoostingClassifier(
+                max_iter=150, max_depth=3, min_samples_leaf=150,
+                l2_regularization=20.0, learning_rate=0.03,
+                class_weight='balanced', early_stopping=True,
+                validation_fraction=0.15, n_iter_no_change=15, random_state=42
+            )
+            self.gbdt_model.fit(X_tab_t, y_tab_t)
+            gbdt_val_probs = self.gbdt_model.predict_proba(X_tab_v)[:, 1]
+            auc_gbdt, gbdt_lo, gbdt_hi = self._block_bootstrap_auc(y_v_np, gbdt_val_probs)
+
+            blend_val_probs = 0.5 * tft_val_probs + 0.5 * gbdt_val_probs
+            auc_blend, blend_lo, blend_hi = self._block_bootstrap_auc(y_v_np, blend_val_probs)
+
+            print(f"    ├─ TFT Validation ROC-AUC:   {auc_tft:.4f} (96h Block-Bootstrap 95% CI: [{tft_lo:.4f}, {tft_hi:.4f}])")
+            print(f"    ├─ GBDT Validation ROC-AUC:  {auc_gbdt:.4f} (96h Block-Bootstrap 95% CI: [{gbdt_lo:.4f}, {gbdt_hi:.4f}])")
+            print(f"    └─ Blend Validation ROC-AUC: {auc_blend:.4f} (96h Block-Bootstrap 95% CI: [{blend_lo:.4f}, {blend_hi:.4f}])")
+
+            candidates = {'tft': (auc_tft, tft_lo), 'gbdt': (auc_gbdt, gbdt_lo), 'blend': (auc_blend, blend_lo)}
+            self.prob_source = max(candidates, key=lambda k: candidates[k][0])
+            best_auc, best_lo = candidates[self.prob_source]
+            print(f"  [{target_col.upper()}] Selected Probability Backbone: {self.prob_source.upper()} (Val AUC: {best_auc:.4f})")
+            if best_auc < 0.51 or best_lo < 0.50:
+                print(f"  [SIGNAL WARNING - {target_col.upper()}] Best Val AUC ({best_auc:.4f}, 95% CI low {best_lo:.4f}) is near 0.50 random baseline!")
+        except Exception as e:
+            print(f"  [GBDT Fallback] Could not fit HistGradientBoosting ({e}); using TFT probabilities.")
+            self.gbdt_model = None
+            self.prob_source = 'tft'
+            best_auc = auc_tft
+
+        print(f"Final {target_col.upper()} Model - Train Loss: {avg_train_loss:.4f} | Best Val AUC: {best_auc:.4f}")
+        return avg_train_loss, best_auc
 
     def predict_batch_embeddings(self, dfs, batch_size=512):
         """Returns (N, hidden_size) fused embeddings."""
@@ -523,31 +625,44 @@ class PricePredictor:
         return np.concatenate(all_h, axis=0)
         
     def predict_batch_classified(self, dfs, batch_size=512):
-        """Returns (N, num_classes) softmax probabilities from the classification head."""
+        """Returns (N, num_classes) probabilities from the selected backbone ('tft', 'gbdt', or 'blend')."""
         self.model.eval()
         df_1h, df_4h, df_1d, df_1w = dfs
         result = self.create_sequences(df_1h, df_4h, df_1d, df_1w)
-        X1, X4, X1d, X1w = result[0], result[1], result[2], result[3]
+        X1_np, X4_np, X1d_np, X1w_np = result[0], result[1], result[2], result[3]
         
-        if len(X1) == 0:
+        if len(X1_np) == 0:
             return np.array([])
             
-        X1 = torch.FloatTensor(X1).to(self.device)
-        X4 = torch.FloatTensor(X4).to(self.device)
-        X1d = torch.FloatTensor(X1d).to(self.device)
-        X1w = torch.FloatTensor(X1w).to(self.device)
-        
-        dataset = torch.utils.data.TensorDataset(X1, X4, X1d, X1w)
-        loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
-        
-        all_probs = []
-        with torch.no_grad():
-            for b_x1, b_x4, b_x1d, b_x1w in loader:
-                _, logits = self.model(b_x1, b_x4, b_x1d, b_x1w)
-                probs = torch.softmax(logits, dim=1)
-                all_probs.append(probs.cpu().numpy())
+        prob_source = getattr(self, 'prob_source', 'tft')
+        gbdt_model = getattr(self, 'gbdt_model', None)
+
+        tft_probs = None
+        if prob_source in ('tft', 'blend') or gbdt_model is None:
+            X1 = torch.FloatTensor(X1_np).to(self.device)
+            X4 = torch.FloatTensor(X4_np).to(self.device)
+            X1d = torch.FloatTensor(X1d_np).to(self.device)
+            X1w = torch.FloatTensor(X1w_np).to(self.device)
+            
+            dataset = torch.utils.data.TensorDataset(X1, X4, X1d, X1w)
+            loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False)
+            
+            all_probs = []
+            with torch.no_grad():
+                for b_x1, b_x4, b_x1d, b_x1w in loader:
+                    _, logits = self.model(b_x1, b_x4, b_x1d, b_x1w)
+                    probs = torch.softmax(logits, dim=1)
+                    all_probs.append(probs.cpu().numpy())
+            tft_probs = np.concatenate(all_probs, axis=0)
+
+        if prob_source in ('gbdt', 'blend') and gbdt_model is not None:
+            X_tab = self.create_tabular_features(X1_np, X4_np, X1d_np, X1w_np)
+            gbdt_probs = gbdt_model.predict_proba(X_tab)
+            if prob_source == 'gbdt':
+                return gbdt_probs
+            return 0.5 * tft_probs + 0.5 * gbdt_probs
                 
-        return np.concatenate(all_probs, axis=0)
+        return tft_probs
 
     def fit_calibrator(self, dfs_val, target_col='target_long'):
         """Fits Platt scaling calibrator on the validation split."""
@@ -558,7 +673,13 @@ class PricePredictor:
         self.calibrator.fit(raw_probs, y_val)
         cal = self.calibrator.predict(raw_probs)
         bal = self.calibrator.predict_balanced(raw_probs)
-        print(f"  [{target_col.upper()}] Platt Calibrator fitted: a={self.calibrator.a:.4f}, b={self.calibrator.b:.4f} (Base Rate: {self.calibrator.base_rate*100:.1f}%)")
+        raw_a = getattr(self.calibrator, 'raw_a', self.calibrator.a)
+        src = getattr(self, 'prob_source', 'tft').upper()
+        print(f"  [{target_col.upper()} | Source: {src}] Platt Calibrator fitted: a={self.calibrator.a:.4f} (raw_a={raw_a:.4f}), b={self.calibrator.b:.4f} (Base Rate: {self.calibrator.base_rate*100:.1f}%)")
+        if self.calibrator.a == 0.0:
+            print(f"    [CALIBRATOR NOTICE] Raw slope ({raw_a:.4f}) <= 0 on Validation -> shrunk to a=0.0000 (neutral 0.50 balanced prior; prevents signal inversion).")
+        elif self.calibrator.a < 0.05:
+            print(f"    [CALIBRATOR NOTICE] Weak validation calibration slope (a={self.calibrator.a:.4f} < 0.05); predictions are heavily shrunk toward base rate.")
         print(f"    Raw mean: {np.mean(raw_probs):.4f} | True-calibrated mean: {np.mean(cal):.4f} | Balanced (0.5 = base rate) mean: {np.mean(bal):.4f} | Balanced >0.5: {(bal > 0.5).mean()*100:.1f}% of bars")
 
     def predict_batch_calibrated(self, dfs, batch_size=512, balanced=False):
@@ -581,6 +702,10 @@ class PricePredictor:
         torch.save({
             'state_dict': base_model.state_dict(),
             'cat_indices': base_model.cat_indices,
+            'hidden_size': self.hidden_size,
+            'num_layers': self.num_layers,
+            'prob_source': getattr(self, 'prob_source', 'tft'),
+            'gbdt_model': getattr(self, 'gbdt_model', None),
             'scalers': {
                 'mean_1h': self.mean_1h, 'std_1h': self.std_1h,
                 'mean_4h': self.mean_4h, 'std_4h': self.std_4h,
@@ -588,6 +713,7 @@ class PricePredictor:
                 'mean_1w': self.mean_1w, 'std_1w': self.std_1w,
             },
             'calibrator': ({'a': self.calibrator.a, 'b': self.calibrator.b,
+                            'raw_a': getattr(self.calibrator, 'raw_a', self.calibrator.a),
                             'base_rate': getattr(self.calibrator, 'base_rate', 0.5)}
                            if getattr(self, 'calibrator', None) is not None else None)
         }, path)
@@ -596,6 +722,10 @@ class PricePredictor:
         # weights_only=False: checkpoint stores NumPy scaler arrays (PyTorch >= 2.6 defaults to weights_only=True)
         checkpoint = torch.load(path, map_location=self.device, weights_only=False)
         cat_indices = checkpoint.get('cat_indices', [])
+        self.hidden_size = checkpoint.get('hidden_size', self.hidden_size)
+        self.num_layers = checkpoint.get('num_layers', self.num_layers)
+        self.prob_source = checkpoint.get('prob_source', 'tft')
+        self.gbdt_model = checkpoint.get('gbdt_model', None)
         scalers = checkpoint.get('scalers', {})
         self.mean_1h = scalers.get('mean_1h', None)
         self.std_1h = scalers.get('std_1h', None)
@@ -610,6 +740,7 @@ class PricePredictor:
             self.calibrator = ProbabilityCalibrator()
             self.calibrator.a = float(cal_state.get('a', 1.0))
             self.calibrator.b = float(cal_state.get('b', 0.0))
+            self.calibrator.raw_a = float(cal_state.get('raw_a', self.calibrator.a))
             self.calibrator.base_rate = float(cal_state.get('base_rate', 0.5))
         else:
             self.calibrator = cal_state
@@ -628,7 +759,7 @@ class PricePredictor:
             self.model = nn.DataParallel(self.model)
             
         self.model.eval()
-        print(f"Model loaded from {path}")
+        print(f"Model loaded from {path} (prob_source={self.prob_source.upper()}, hidden={self.hidden_size})")
 
     @staticmethod
     def save_cached_embeddings(path, embeddings):

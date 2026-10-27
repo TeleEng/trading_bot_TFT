@@ -25,7 +25,7 @@ from backtest import Backtester
 from performance import PerformanceMetrics
 from rl_environment import TradingRLEnv
 from rl_grid_search import run_grid_search
-from baselines import run_deterministic_baseline
+from baselines import run_deterministic_baseline, run_random_baseline
 
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import EvalCallback
@@ -229,20 +229,20 @@ def main():
                 train_dfs,
                 val_dfs,
                 target_col="target_long",
-                epochs=150,
-                patience=20
+                epochs=50,
+                patience=10
             )
-            print(f"Long Brain Trained - Train Loss: {train_score_l:.4f} | Val F1: {val_score_l:.4f}")
+            print(f"Long Brain Trained - Train Loss: {train_score_l:.4f} | Best Val AUC: {val_score_l:.4f}")
 
             print("\n[Phase 3.5] Supervised MTF-TFT Training (Short Brain)...")
             train_score_s, val_score_s = model_short.train(
                 train_dfs,
                 val_dfs,
                 target_col="target_short",
-                epochs=150,
-                patience=20
+                epochs=50,
+                patience=10
             )
-            print(f"Short Brain Trained - Train Loss: {train_score_s:.4f} | Val F1: {val_score_s:.4f}")
+            print(f"Short Brain Trained - Train Loss: {train_score_s:.4f} | Best Val AUC: {val_score_s:.4f}")
 
             print("\n[Phase 3.6] Fitting Probability Calibrators on Validation Split...")
             model_long.fit_calibrator(val_dfs, target_col="target_long")
@@ -250,7 +250,7 @@ def main():
             model_long.save(str(long_model_path))
             model_short.save(str(short_model_path))
 
-        print("\n[Phase 3.8] Generating & Caching 256-d Multi-Timeframe Embeddings & Calibrated Probabilities...")
+        print("\n[Phase 3.8] Generating & Caching 128-d Multi-Timeframe Embeddings & Calibrated Probabilities...")
         train_emb_l = model_long.predict_batch_embeddings(train_dfs)
         train_emb_s = model_short.predict_batch_embeddings(train_dfs)
         train_embeddings = np.concatenate([train_emb_l, train_emb_s], axis=1)
@@ -289,7 +289,7 @@ def main():
         print("Embeddings & probabilities successfully cached to disk!")
 
     # Evaluate Backbone Probability Distribution & Empirical Edge Calibration
-    evaluate_probability_calibration(test_df_aligned, test_probabilities, split_name="Held-Out Test Split (Balanced Probs)")
+    evaluate_probability_calibration(val_df_aligned, val_probabilities, split_name="Validation Split (Balanced Probs)"); evaluate_probability_calibration(test_df_aligned, test_probabilities, split_name="Held-Out Test Split (Balanced Probs)")
     print(f"  [TRUE CALIBRATED P(TP)] Test mean p_long: {np.mean(test_ev_probabilities[:, 0]):.4f} | "
           f"mean p_short: {np.mean(test_ev_probabilities[:, 1]):.4f} | "
           f"bars with p > 0.40 (3:2 EV breakeven) -> long: {(test_ev_probabilities[:, 0] > 0.40).mean()*100:.1f}% | "
@@ -374,7 +374,7 @@ def main():
         render=False
     )
     
-    rl_device = "cuda" if torch.cuda.is_available() else "cpu"
+    rl_device = "cpu"
     print(f"PPO Policy training device: {rl_device}")
 
     # Configure PPO with non-zero entropy coefficient to guarantee exploration
@@ -398,7 +398,7 @@ def main():
     try:
         best_zip = models_dir / "best_model.zip"
         if best_zip.exists():
-            ppo_model = PPO.load(str(best_zip))
+            ppo_model = PPO.load(str(best_zip), device="cpu")
             print("Successfully loaded best RL model from validation checkpoint.")
     except Exception as e:
         print(f"Using current model ({e}).")
@@ -486,6 +486,7 @@ def main():
     )
 
     print("\n" + "="*60)
+    run_random_baseline(test_embeddings, test_df_aligned, breakeven_sl=False, be_trigger_mult=1.2, split_name="Held-Out Test Split")
     print("PIPELINE COMPLETE!")
     print("="*60)
 

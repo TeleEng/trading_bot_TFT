@@ -69,6 +69,70 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
     # Features: Wide 3:2 ATR R:R, Backbone Prob Edge, Break-Even Ratchet (1.2x vs 1.5x), Volatility & Trend Filters
     configs = [
         {
+            "name": "NetRR_dz0.25_edge0.01_NoBE",
+            "reward_mode": "net_rr",
+            "deadzone": 0.25,
+            "min_confidence": 0.50,
+            "min_edge": 0.01,
+            "breakeven_sl": False,
+            "be_trigger_mult": 1.2,
+            "volatility_filter": True,
+            "trend_filter": True,
+            "cooldown_bars": 4,
+            "max_risk_multiplier": 1.5,
+            "ent_coef": 0.01,
+            "lr": 3e-4,
+            "flat_penalty": 0.0,
+        },
+        {
+            "name": "NetRR_dz0.20_edge0.01_NoBE",
+            "reward_mode": "net_rr",
+            "deadzone": 0.20,
+            "min_confidence": 0.50,
+            "min_edge": 0.01,
+            "breakeven_sl": False,
+            "be_trigger_mult": 1.2,
+            "volatility_filter": True,
+            "trend_filter": True,
+            "cooldown_bars": 4,
+            "max_risk_multiplier": 1.5,
+            "ent_coef": 0.01,
+            "lr": 3e-4,
+            "flat_penalty": 0.0,
+        },
+        {
+            "name": "NetRR_dz0.25_edge0.02_NoBE",
+            "reward_mode": "net_rr",
+            "deadzone": 0.25,
+            "min_confidence": 0.50,
+            "min_edge": 0.02,
+            "breakeven_sl": False,
+            "be_trigger_mult": 1.2,
+            "volatility_filter": True,
+            "trend_filter": True,
+            "cooldown_bars": 4,
+            "max_risk_multiplier": 1.5,
+            "ent_coef": 0.01,
+            "lr": 3e-4,
+            "flat_penalty": 0.0,
+        },
+        {
+            "name": "NetRR_dz0.25_edge0.01_BE1.8",
+            "reward_mode": "net_rr",
+            "deadzone": 0.25,
+            "min_confidence": 0.50,
+            "min_edge": 0.01,
+            "breakeven_sl": True,
+            "be_trigger_mult": 1.8,
+            "volatility_filter": True,
+            "trend_filter": True,
+            "cooldown_bars": 4,
+            "max_risk_multiplier": 1.5,
+            "ent_coef": 0.01,
+            "lr": 3e-4,
+            "flat_penalty": 0.0,
+        },
+        {
             "name": "NetRR_dz0.25_edge0.01_BE1.2",
             "reward_mode": "net_rr",
             "deadzone": 0.25,
@@ -85,76 +149,12 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
             "flat_penalty": 0.0,
         },
         {
-            "name": "NetRR_dz0.25_edge0.02_BE1.2",
-            "reward_mode": "net_rr",
-            "deadzone": 0.25,
-            "min_confidence": 0.50,
-            "min_edge": 0.02,
-            "breakeven_sl": True,
-            "be_trigger_mult": 1.2,
-            "volatility_filter": True,
-            "trend_filter": True,
-            "cooldown_bars": 4,
-            "max_risk_multiplier": 1.5,
-            "ent_coef": 0.01,
-            "lr": 3e-4,
-            "flat_penalty": 0.0,
-        },
-        {
-            "name": "NetRR_dz0.20_edge0.01_BE1.2",
-            "reward_mode": "net_rr",
-            "deadzone": 0.20,
-            "min_confidence": 0.50,
-            "min_edge": 0.01,
-            "breakeven_sl": True,
-            "be_trigger_mult": 1.2,
-            "volatility_filter": True,
-            "trend_filter": True,
-            "cooldown_bars": 4,
-            "max_risk_multiplier": 1.5,
-            "ent_coef": 0.01,
-            "lr": 3e-4,
-            "flat_penalty": 0.0,
-        },
-        {
-            "name": "NetRR_dz0.20_edge0.02_BE1.2",
-            "reward_mode": "net_rr",
-            "deadzone": 0.20,
-            "min_confidence": 0.50,
-            "min_edge": 0.02,
-            "breakeven_sl": True,
-            "be_trigger_mult": 1.2,
-            "volatility_filter": True,
-            "trend_filter": True,
-            "cooldown_bars": 4,
-            "max_risk_multiplier": 1.5,
-            "ent_coef": 0.01,
-            "lr": 3e-4,
-            "flat_penalty": 0.0,
-        },
-        {
-            "name": "NetRR_dz0.25_edge0.01_BE1.5",
-            "reward_mode": "net_rr",
-            "deadzone": 0.25,
-            "min_confidence": 0.50,
-            "min_edge": 0.01,
-            "breakeven_sl": True,
-            "be_trigger_mult": 1.5,
-            "volatility_filter": True,
-            "trend_filter": True,
-            "cooldown_bars": 4,
-            "max_risk_multiplier": 1.5,
-            "ent_coef": 0.01,
-            "lr": 3e-4,
-            "flat_penalty": 0.0,
-        },
-        {
-            "name": "DSR_dz0.25_edge0.01_BE1.2",
+            "name": "DSR_dz0.25_edge0.01_NoBE",
             "reward_mode": "dsr",
             "deadzone": 0.25,
             "min_confidence": 0.50,
             "min_edge": 0.01,
-            "breakeven_sl": True,
+            "breakeven_sl": False,
             "be_trigger_mult": 1.2,
             "volatility_filter": True,
             "trend_filter": True,
@@ -327,7 +327,7 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
         print(f"SINGLE-SHOT FINAL EVALUATION ON UNTOUCHED HELD-OUT TEST SPLIT: {champion_config['name']}")
         print("="*80)
         
-        champion_model = PPO.load(str(models_dir / "best_model.zip"))
+        champion_model = PPO.load(str(models_dir / "best_model.zip"), device="cpu")
         
         test_env = TradingRLEnv(
             test_embeddings, test_df,
@@ -344,7 +344,7 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
             cooldown_bars=champion_config['cooldown_bars'],
             trend_filter=champion_config['trend_filter'],
             volatility_filter=champion_config.get('volatility_filter', True),
-            breakeven_sl=champion_config.get('breakeven_sl', True),
+            breakeven_sl=champion_config.get('breakeven_sl', False),
             be_trigger_mult=champion_config.get('be_trigger_mult', 1.2),
             use_ev_gate=champion_config.get('use_ev_gate', False),
             min_ev_r=champion_config.get('min_ev_r', 0.0),
@@ -389,15 +389,19 @@ def run_grid_search(train_embeddings, val_embeddings, test_embeddings,
         PerformanceMetrics.plot_results(test_results, save_path=str(viz_path))
         print(f"Champion Test Backtest visualization saved to {viz_path}")
         
-    # Benchmark against Deterministic Rule Agents on the same test split (no RL)
+    # Benchmark against Deterministic Rule Agents & Zero-Skill Random Agent on the same test split (no RL)
     try:
-        from baselines import run_deterministic_baseline
+        from baselines import run_deterministic_baseline, run_random_baseline
         run_deterministic_baseline(test_embeddings, test_df, probabilities=test_probs, ev_probabilities=test_ev_probs,
-                                   be_trigger_mult=1.2, split_name="Held-Out Test", use_ev=False)
+                                   breakeven_sl=False, be_trigger_mult=1.2, split_name="Held-Out Test", use_ev=False)
         run_deterministic_baseline(test_embeddings, test_df, probabilities=test_probs, ev_probabilities=test_ev_probs,
-                                   be_trigger_mult=1.2, split_name="Held-Out Test", use_ev=True, min_ev_r=0.0)
+                                   breakeven_sl=True, be_trigger_mult=1.2, split_name="Held-Out Test", use_ev=False)
+        run_deterministic_baseline(test_embeddings, test_df, probabilities=test_probs, ev_probabilities=test_ev_probs,
+                                   breakeven_sl=False, be_trigger_mult=1.2, split_name="Held-Out Test", use_ev=True, min_ev_r=0.0)
+        run_random_baseline(test_embeddings, test_df, breakeven_sl=False, be_trigger_mult=1.2, split_name="Held-Out Test")
+        run_random_baseline(test_embeddings, test_df, breakeven_sl=True, be_trigger_mult=1.2, split_name="Held-Out Test")
     except Exception as e:
-        print(f"Deterministic baseline check failed: {e}")
+        print(f"Baseline check failed: {e}")
         
     return df_val_leaderboard
 
