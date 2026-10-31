@@ -189,16 +189,19 @@ class ProbabilityCalibrator:
     Monotonic, preserves ranking, and aligns model outputs with empirical validation base rates.
 
     Two output spaces are exposed:
-      - predict(p)            -> TRUE calibrated probability P(TP hit) (use for EV-in-R maths).
-      - predict_balanced(p)   -> PRIOR-CORRECTED probability where 0.50 == validation base rate.
-                                 logit(p_bal) = logit(p_cal) - logit(base_rate)
-                                 Long and short brains become directly comparable (no base-rate
-                                 offset), so min_confidence=0.50 / min_edge gates measure LIFT.
+      - predict(p)               -> TRUE calibrated probability P(TP hit) anchored to validation base rate.
+      - predict_prior_neutral(p) -> PRIOR-NEUTRALIZED P(TP hit) anchored to the 0.400 driftless 3:2 barrier
+                                    breakeven (removes validation bull/bear drift bias from EV-in-R gating).
+      - predict_balanced(p)      -> PRIOR-CORRECTED probability where 0.50 == validation mean logit.
     """
     def __init__(self):
         self.a = 1.0
         self.b = 0.0
+        self.raw_a = 1.0
         self.base_rate = 0.5
+        self.logit_mean = 0.0
+        self.logit_std = 1.0
+        self.beta_std = 0.0
 
     @staticmethod
     def _logit(p):
@@ -209,31 +212,113 @@ class ProbabilityCalibrator:
         logits = self._logit(probs)
         y = np.array(labels, dtype=np.float64)
         self.base_rate = float(np.clip(np.mean(y), 1e-4, 1.0 - 1e-4))
+        self.logit_mean = float(np.mean(logits))
+        self.logit_std = float(max(1e-6, np.std(logits)))
+        z_std = (logits - self.logit_mean) / self.logit_std
         
         try:
             from sklearn.linear_model import LogisticRegression
-            clf = LogisticRegression(C=1.0)
-            clf.fit(logits.reshape(-1, 1), y)
-            self.a = float(clf.coef_[0][0])
-            self.b = float(clf.intercept_[0])
+            # Fit on standardized logits z_std so L2 regularization treats Long and Short dispersions equally
+            clf = LogisticRegression(C=0.5)
+            clf.fit(z_std.reshape(-1, 1), y)
+            self.beta_std = float(clf.coef_[0][0])
+            intercept_std = float(clf.intercept_[0])
+            self.a = float(self.beta_std / self.logit_std)
+            self.b = float(intercept_std - self.a * self.logit_mean)
         except Exception:
-            self.a = 1.0
+            self.beta_std = 0.0
+            self.a = 0.0
             self.b = float(np.log(self.base_rate / (1.0 - self.base_rate)))
 
         # Bayesian shrinkage: never allow a negative slope (a < 0) to invert predictions out-of-sample
         self.raw_a = self.a
         if self.a <= 0.0:
             self.a = 0.0
+            self.beta_std = 0.0
             self.b = float(np.log(self.base_rate / (1.0 - self.base_rate)))
+        else:
+            # Cap extreme standardized log-odds slope so one brain cannot have 4x the dispersion of the other
+            max_beta_std = 0.08
+            if self.beta_std > max_beta_std:
+                self.beta_std = max_beta_std
+                self.a = float(self.beta_std / self.logit_std)
+                self.b = float(self._logit(self.base_rate) - self.a * self.logit_mean)
 
     def predict(self, probs):
         z = self.a * self._logit(probs) + self.b
         return 1.0 / (1.0 + np.exp(-z))
 
-    def predict_balanced(self, probs):
-        base_rate = getattr(self, 'base_rate', 0.5)
-        z = self.a * self._logit(probs) + self.b - float(self._logit(base_rate))
+    def predict_prior_neutral(self, probs, neutral_prior=0.40):
+        """Maps validation mean conviction to the driftless 3:2 barrier breakeven (0.40) for unbiased EV gating."""
+        logit_mean = getattr(self, 'logit_mean', 0.0)
+        z = float(self._logit(neutral_prior)) + self.a * (self._logit(probs) - logit_mean)
         return 1.0 / (1.0 + np.exp(-z))
+
+    def predict_balanced(self, probs):
+        logit_mean = getattr(self, 'logit_mean', None)
+        if logit_mean is not None:
+            z = self.a * (self._logit(probs) - float(logit_mean))
+        else:
+            base_rate = getattr(self, 'base_rate', 0.5)
+            z = self.a * self._logit(probs) + self.b - float(self._logit(base_rate))
+        return 1.0 / (1.0 + np.exp(-z))
+
+
+class PurgedGBDTEnsemble:
+    """5-fold chronological Purged HistGradientBoosting ensemble (purges 96h label overlap around each fold)."""
+    def __init__(self, n_splits=5, purge_steps=25):
+        self.n_splits = n_splits
+        self.purge_steps = purge_steps
+        self.models = []
+        self.weights = []
+        self.oof_aucs = []
+
+    def fit(self, X, y):
+        from sklearn.ensemble import HistGradientBoostingClassifier
+        n = len(X)
+        fold_size = n // self.n_splits
+        self.models = []
+        self.weights = []
+        self.oof_aucs = []
+
+        for k in range(self.n_splits):
+            val_start = k * fold_size
+            val_end = n if k == self.n_splits - 1 else (k + 1) * fold_size
+            purge_start = max(0, val_start - self.purge_steps)
+            purge_end = min(n, val_end + self.purge_steps)
+
+            train_mask = np.ones(n, dtype=bool)
+            train_mask[purge_start:purge_end] = False
+            X_tr, y_tr = X[train_mask], y[train_mask]
+            X_va, y_va = X[val_start:val_end], y[val_start:val_end]
+
+            clf = HistGradientBoostingClassifier(
+                max_iter=100,
+                max_depth=3,
+                min_samples_leaf=160,
+                l2_regularization=25.0,
+                learning_rate=0.025,
+                max_features=0.75,
+                class_weight='balanced',
+                early_stopping=False,
+                random_state=42 + k
+            )
+            clf.fit(X_tr, y_tr)
+            oof_p = clf.predict_proba(X_va)[:, 1]
+            oof_auc = float(roc_auc_score(y_va, oof_p)) if len(np.unique(y_va)) == 2 else 0.50
+            self.models.append(clf)
+            self.oof_aucs.append(oof_auc)
+            self.weights.append(max(0.005, oof_auc - 0.495))
+
+        w_sum = sum(self.weights)
+        self.weights = [w / w_sum for w in self.weights]
+        return self
+
+    def predict_proba(self, X):
+        probs = np.zeros((len(X), 2), dtype=np.float64)
+        for clf, w in zip(self.models, self.weights):
+            probs += w * clf.predict_proba(X)
+        return probs
 
 
 class PricePredictor:
@@ -257,20 +342,26 @@ class PricePredictor:
 
     @staticmethod
     def create_tabular_features(X1, X4, X1d, X1w):
-        """Extracts non-memorizing multi-timeframe summary features for GBDT signal benchmarking."""
+        """Extracts non-memorizing multi-timeframe & cross-horizon interaction features for GBDT."""
         if len(X1) == 0:
             return np.empty((0, 1), dtype=np.float32)
         f_1h_curr = X1[:, -1, :]
-        f_1h_diff4 = X1[:, -1, :] - X1[:, -5, :]
-        f_1h_diff12 = X1[:, -1, :] - X1[:, -13, :]
+        f_1h_diff2 = X1[:, -1, :] - X1[:, -3, :]
+        f_1h_diff6 = X1[:, -1, :] - X1[:, -7, :]
+        f_1h_diff24 = X1[:, -1, :] - X1[:, -25, :]
         f_1h_mean12 = np.mean(X1[:, -12:, :], axis=1)
+        f_1h_std12 = np.std(X1[:, -12:, :], axis=1)
         f_4h_curr = X4[:, -1, :]
         f_4h_diff3 = X4[:, -1, :] - X4[:, -4, :]
         f_1d_curr = X1d[:, -1, :]
+        f_1d_diff5 = X1d[:, -1, :] - X1d[:, -6, :]
         f_1w_curr = X1w[:, -1, :]
+        f_mtf_1h_4h = f_1h_curr - f_4h_curr
+        f_mtf_4h_1d = f_4h_curr - f_1d_curr
         return np.hstack([
-            f_1h_curr, f_1h_diff4, f_1h_diff12, f_1h_mean12,
-            f_4h_curr, f_4h_diff3, f_1d_curr, f_1w_curr
+            f_1h_curr, f_1h_diff2, f_1h_diff6, f_1h_diff24, f_1h_mean12, f_1h_std12,
+            f_4h_curr, f_4h_diff3, f_1d_curr, f_1d_diff5, f_1w_curr,
+            f_mtf_1h_4h, f_mtf_4h_1d
         ]).astype(np.float32)
 
     @staticmethod
@@ -389,7 +480,9 @@ class PricePredictor:
         return X_1h, X_4h, X_1d, X_1w
 
     def get_aligned_df(self, df_1h, df_4h, df_1d, df_1w):
-        """Returns the subset of df_1h that exactly matches the generated sequences/embeddings."""
+        """Returns the subset of df_1h that exactly matches the generated sequences/embeddings,
+        enriched with strictly causal higher-timeframe regime indicators (4H & 1D Dist_SMA_50).
+        """
         close_1h = df_1h.index + pd.Timedelta(hours=1)
         close_4h = df_4h.index + pd.Timedelta(hours=4)
         close_1d = df_1d.index + pd.Timedelta(days=1)
@@ -403,7 +496,14 @@ class PricePredictor:
         for i in range(self.input_chunk_length - 1, len(df_1h)):
             if idx_4h[i] >= 51 and idx_1d[i] >= 51 and idx_1w[i] >= 51:
                 valid_mask[i] = True
-        return df_1h.iloc[valid_mask]
+        aligned = df_1h.iloc[valid_mask].copy()
+        valid_4h = idx_4h[valid_mask]
+        valid_1d = idx_1d[valid_mask]
+        if 'Dist_SMA_50' in df_4h.columns:
+            aligned['Dist_SMA_50_4H'] = df_4h['Dist_SMA_50'].values[valid_4h]
+        if 'Dist_SMA_50' in df_1d.columns:
+            aligned['Dist_SMA_50_1D'] = df_1d['Dist_SMA_50'].values[valid_1d]
+        return aligned
 
     def train(self, dfs_train, dfs_val, target_col='target_long', epochs=50, batch_size=256, patience=10, train_stride=4, active_augs=None):
         df_1h_t, df_4h_t, df_1d_t, df_1w_t = dfs_train
@@ -549,7 +649,7 @@ class PricePredictor:
             print(f"Restored best TFT model from checkpoint (Best Val AUC: {best_val_auc:.4f}).")
 
         # --- Non-Neural GBDT Signal Check & Automatic Backbone Selection ---
-        print(f"\n  [{target_col.upper()}] Running Non-Neural GBDT Signal Check (HistGradientBoosting)...")
+        print(f"\n  [{target_col.upper()}] Running Non-Neural Purged GBDT Signal Check (HistGradientBoosting)...")
         X_tab_t = self.create_tabular_features(X1_t_np[::stride], X4_t_np[::stride], X1d_t_np[::stride], X1w_t_np[::stride])
         y_tab_t = y_t_np[::stride]
         X_tab_v = self.create_tabular_features(X1_v_np, X4_v_np, X1d_v_np, X1w_v_np)
@@ -566,27 +666,44 @@ class PricePredictor:
 
         try:
             from sklearn.ensemble import HistGradientBoostingClassifier
-            self.gbdt_model = HistGradientBoostingClassifier(
+            single_gbdt = HistGradientBoostingClassifier(
                 max_iter=150, max_depth=3, min_samples_leaf=150,
                 l2_regularization=20.0, learning_rate=0.03,
                 class_weight='balanced', early_stopping=True,
                 validation_fraction=0.15, n_iter_no_change=15, random_state=42
             )
-            self.gbdt_model.fit(X_tab_t, y_tab_t)
-            gbdt_val_probs = self.gbdt_model.predict_proba(X_tab_v)[:, 1]
-            auc_gbdt, gbdt_lo, gbdt_hi = self._block_bootstrap_auc(y_v_np, gbdt_val_probs)
+            single_gbdt.fit(X_tab_t, y_tab_t)
+            single_val_probs = single_gbdt.predict_proba(X_tab_v)[:, 1]
+            auc_single, single_lo, single_hi = self._block_bootstrap_auc(y_v_np, single_val_probs)
+
+            purged_ens = PurgedGBDTEnsemble(n_splits=5, purge_steps=max(1, 96 // stride))
+            purged_ens.fit(X_tab_t, y_tab_t)
+            ens_val_probs = purged_ens.predict_proba(X_tab_v)[:, 1]
+            auc_ens, ens_lo, ens_hi = self._block_bootstrap_auc(y_v_np, ens_val_probs)
+
+            if auc_ens >= auc_single:
+                self.gbdt_model = purged_ens
+                gbdt_val_probs = ens_val_probs
+                auc_gbdt, gbdt_lo, gbdt_hi = auc_ens, ens_lo, ens_hi
+                gbdt_label = f"Purged 5-Fold GBDT (OOF AUC: {np.mean(purged_ens.oof_aucs):.4f})"
+            else:
+                self.gbdt_model = single_gbdt
+                gbdt_val_probs = single_val_probs
+                auc_gbdt, gbdt_lo, gbdt_hi = auc_single, single_lo, single_hi
+                gbdt_label = "Single Regularized GBDT"
 
             blend_val_probs = 0.5 * tft_val_probs + 0.5 * gbdt_val_probs
             auc_blend, blend_lo, blend_hi = self._block_bootstrap_auc(y_v_np, blend_val_probs)
 
-            print(f"    ├─ TFT Validation ROC-AUC:   {auc_tft:.4f} (96h Block-Bootstrap 95% CI: [{tft_lo:.4f}, {tft_hi:.4f}])")
-            print(f"    ├─ GBDT Validation ROC-AUC:  {auc_gbdt:.4f} (96h Block-Bootstrap 95% CI: [{gbdt_lo:.4f}, {gbdt_hi:.4f}])")
-            print(f"    └─ Blend Validation ROC-AUC: {auc_blend:.4f} (96h Block-Bootstrap 95% CI: [{blend_lo:.4f}, {blend_hi:.4f}])")
+            print(f"    ├─ TFT Validation ROC-AUC:        {auc_tft:.4f} (96h Block-Bootstrap 95% CI: [{tft_lo:.4f}, {tft_hi:.4f}])")
+            print(f"    ├─ Single GBDT Val ROC-AUC:       {auc_single:.4f} (96h Block-Bootstrap 95% CI: [{single_lo:.4f}, {single_hi:.4f}])")
+            print(f"    ├─ Purged 5-Fold GBDT Val AUC:    {auc_ens:.4f} (96h Block-Bootstrap 95% CI: [{ens_lo:.4f}, {ens_hi:.4f}])")
+            print(f"    └─ Blend Validation ROC-AUC:      {auc_blend:.4f} (96h Block-Bootstrap 95% CI: [{blend_lo:.4f}, {blend_hi:.4f}])")
 
             candidates = {'tft': (auc_tft, tft_lo), 'gbdt': (auc_gbdt, gbdt_lo), 'blend': (auc_blend, blend_lo)}
             self.prob_source = max(candidates, key=lambda k: candidates[k][0])
             best_auc, best_lo = candidates[self.prob_source]
-            print(f"  [{target_col.upper()}] Selected Probability Backbone: {self.prob_source.upper()} (Val AUC: {best_auc:.4f})")
+            print(f"  [{target_col.upper()}] Selected Probability Backbone: {self.prob_source.upper()} [{gbdt_label}] (Val AUC: {best_auc:.4f})")
             if best_auc < 0.51 or best_lo < 0.50:
                 print(f"  [SIGNAL WARNING - {target_col.upper()}] Best Val AUC ({best_auc:.4f}, 95% CI low {best_lo:.4f}) is near 0.50 random baseline!")
         except Exception as e:
@@ -672,28 +789,30 @@ class PricePredictor:
         self.calibrator = ProbabilityCalibrator()
         self.calibrator.fit(raw_probs, y_val)
         cal = self.calibrator.predict(raw_probs)
+        ev_cal = self.calibrator.predict_prior_neutral(raw_probs, neutral_prior=0.40)
         bal = self.calibrator.predict_balanced(raw_probs)
         raw_a = getattr(self.calibrator, 'raw_a', self.calibrator.a)
+        beta_std = getattr(self.calibrator, 'beta_std', 0.0)
         src = getattr(self, 'prob_source', 'tft').upper()
-        print(f"  [{target_col.upper()} | Source: {src}] Platt Calibrator fitted: a={self.calibrator.a:.4f} (raw_a={raw_a:.4f}), b={self.calibrator.b:.4f} (Base Rate: {self.calibrator.base_rate*100:.1f}%)")
+        print(f"  [{target_col.upper()} | Source: {src}] Platt Calibrator fitted: a={self.calibrator.a:.4f} (raw_a={raw_a:.4f}, beta_std={beta_std:.4f}), b={self.calibrator.b:.4f} (Val Base Rate: {self.calibrator.base_rate*100:.1f}%)")
         if self.calibrator.a == 0.0:
             print(f"    [CALIBRATOR NOTICE] Raw slope ({raw_a:.4f}) <= 0 on Validation -> shrunk to a=0.0000 (neutral 0.50 balanced prior; prevents signal inversion).")
-        elif self.calibrator.a < 0.05:
-            print(f"    [CALIBRATOR NOTICE] Weak validation calibration slope (a={self.calibrator.a:.4f} < 0.05); predictions are heavily shrunk toward base rate.")
-        print(f"    Raw mean: {np.mean(raw_probs):.4f} | True-calibrated mean: {np.mean(cal):.4f} | Balanced (0.5 = base rate) mean: {np.mean(bal):.4f} | Balanced >0.5: {(bal > 0.5).mean()*100:.1f}% of bars")
+        elif beta_std < 0.015:
+            print(f"    [CALIBRATOR NOTICE] Weak validation calibration slope (beta_std={beta_std:.4f}); predictions are heavily shrunk toward base rate.")
+        print(f"    Raw mean: {np.mean(raw_probs):.4f} | True-cal mean: {np.mean(cal):.4f} | Prior-Neutral (0.40) mean: {np.mean(ev_cal):.4f} (>0.407: {(ev_cal > 0.407).mean()*100:.1f}%) | Balanced (>0.50: {(bal > 0.50).mean()*100:.1f}%, Std: {np.std(bal):.4f})")
 
     def predict_batch_calibrated(self, dfs, batch_size=512, balanced=False):
         """Returns (N, 2) calibrated probabilities [P(0), P(1)].
 
-        balanced=False -> true calibrated P(TP hit), for EV-in-R calculations.
-        balanced=True  -> prior-corrected probability (0.50 == validation base rate), for gating/obs.
+        balanced=False -> prior-neutralized P(TP hit) anchored to 0.40 (driftless 3:2 barrier breakeven) for unbiased EV-in-R gating.
+        balanced=True  -> prior-corrected probability (0.50 == validation mean logit), for gating/obs.
         """
         raw_probs = self.predict_batch_classified(dfs, batch_size)[:, 1]
         if getattr(self, 'calibrator', None) is not None:
             if balanced:
                 cal_p1 = self.calibrator.predict_balanced(raw_probs)
             else:
-                cal_p1 = self.calibrator.predict(raw_probs)
+                cal_p1 = self.calibrator.predict_prior_neutral(raw_probs, neutral_prior=0.40)
             return np.column_stack([1.0 - cal_p1, cal_p1])
         return np.column_stack([1.0 - raw_probs, raw_probs])
 
@@ -714,7 +833,10 @@ class PricePredictor:
             },
             'calibrator': ({'a': self.calibrator.a, 'b': self.calibrator.b,
                             'raw_a': getattr(self.calibrator, 'raw_a', self.calibrator.a),
-                            'base_rate': getattr(self.calibrator, 'base_rate', 0.5)}
+                            'base_rate': getattr(self.calibrator, 'base_rate', 0.5),
+                            'logit_mean': getattr(self.calibrator, 'logit_mean', 0.0),
+                            'logit_std': getattr(self.calibrator, 'logit_std', 1.0),
+                            'beta_std': getattr(self.calibrator, 'beta_std', 0.0)}
                            if getattr(self, 'calibrator', None) is not None else None)
         }, path)
 
@@ -742,6 +864,9 @@ class PricePredictor:
             self.calibrator.b = float(cal_state.get('b', 0.0))
             self.calibrator.raw_a = float(cal_state.get('raw_a', self.calibrator.a))
             self.calibrator.base_rate = float(cal_state.get('base_rate', 0.5))
+            self.calibrator.logit_mean = float(cal_state.get('logit_mean', 0.0))
+            self.calibrator.logit_std = float(cal_state.get('logit_std', 1.0))
+            self.calibrator.beta_std = float(cal_state.get('beta_std', 0.0))
         else:
             self.calibrator = cal_state
         

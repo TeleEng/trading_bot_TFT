@@ -44,26 +44,27 @@ class DeterministicRuleAgent:
         ev_l = ev_p_l * env.long_tp_mult - (1.0 - ev_p_l) * env.long_sl_mult - cost_in_r
         ev_s = ev_p_s * env.short_tp_mult - (1.0 - ev_p_s) * env.short_sl_mult - cost_in_r
         
+        min_own_conf = max(self.min_confidence, 0.50 + 0.35 * self.min_edge)
         if self.use_ev:
-            if ev_l > self.min_ev_r and ev_l > ev_s:
+            if ev_l >= self.min_ev_r and p_l >= self.min_confidence and p_l > p_s:
                 return 1.0
-            elif ev_s > self.min_ev_r and ev_s > ev_l:
+            elif ev_s >= self.min_ev_r and p_s >= self.min_confidence and p_s > p_l:
                 return -1.0
             return 0.0
         else:
-            if p_l >= self.min_confidence and (p_l - p_s) >= self.min_edge:
+            if p_l >= min_own_conf and (p_l - p_s) >= self.min_edge:
                 return 1.0
-            elif p_s >= self.min_confidence and (p_s - p_l) >= self.min_edge:
+            elif p_s >= min_own_conf and (p_s - p_l) >= self.min_edge:
                 return -1.0
             return 0.0
 
 
 def run_deterministic_baseline(embeddings, df, probabilities=None, breakeven_sl=False, be_trigger_mult=1.2, split_name="Held-Out Test",
-                               ev_probabilities=None, use_ev=False, min_ev_r=0.0):
+                               ev_probabilities=None, use_ev=False, min_ev_r=0.0, min_edge=0.01):
     """Runs the deterministic rule agent on the specified split.
 
     use_ev=False -> balanced-probability confidence/edge rule (same gate semantics as the PPO configs).
-    use_ev=True  -> EV-in-R rule on TRUE calibrated probabilities (ev_probabilities).
+    use_ev=True  -> EV-in-R rule on prior-neutralized calibrated probabilities (ev_probabilities).
     """
     env = TradingRLEnv(
         embeddings, df,
@@ -72,6 +73,8 @@ def run_deterministic_baseline(embeddings, df, probabilities=None, breakeven_sl=
         long_tp_mult=3.0, long_sl_mult=2.0,
         short_tp_mult=3.0, short_sl_mult=2.0,
         deadzone=0.20,
+        min_edge=min_edge,
+        max_risk_multiplier=1.0,
         breakeven_sl=breakeven_sl,
         be_trigger_mult=be_trigger_mult,
         volatility_filter=True,
@@ -83,9 +86,9 @@ def run_deterministic_baseline(embeddings, df, probabilities=None, breakeven_sl=
         is_eval=True
     )
     
-    agent = DeterministicRuleAgent(min_edge=0.01, min_confidence=0.50, use_ev=use_ev, min_ev_r=min_ev_r)
+    agent = DeterministicRuleAgent(min_edge=min_edge, min_confidence=0.50, use_ev=use_ev, min_ev_r=min_ev_r)
     be_tag = f"BE={be_trigger_mult:.1f}x" if breakeven_sl else "NoBE"
-    rule_name = f"EV-in-R > {min_ev_r:+.2f} ({be_tag})" if use_ev else f"Balanced Prob Edge >= 0.01 ({be_tag})"
+    rule_name = f"EV-in-R >= {min_ev_r:+.2f} ({be_tag})" if use_ev else f"Balanced Prob Edge >= {min_edge:.2f} ({be_tag})"
     obs, _ = env.reset()
     done = False
     records = []
@@ -133,6 +136,7 @@ def run_random_baseline(embeddings, df, breakeven_sl=False, be_trigger_mult=1.2,
             long_tp_mult=3.0, long_sl_mult=2.0,
             short_tp_mult=3.0, short_sl_mult=2.0,
             deadzone=0.20,
+            max_risk_multiplier=1.0,
             breakeven_sl=breakeven_sl,
             be_trigger_mult=be_trigger_mult,
             volatility_filter=True,
@@ -163,7 +167,7 @@ def run_random_baseline(embeddings, df, breakeven_sl=False, be_trigger_mult=1.2,
             })
         res_df = pd.DataFrame(records)
         m = PerformanceMetrics.calculate_metrics(res_df, initial_capital=10000)
-        exp_r = float(np.mean(env.trade_r_multiples)) if len(env.trade_r_multiples) > 0 else 0.0
+        exp_r = float(np.mean(env.trade_r_history)) if len(env.trade_r_history) > 0 else 0.0
         seed_metrics.append({
             'trades': env.total_trades,
             'return': m.get('Total Return (%)', 0.0),
@@ -171,7 +175,7 @@ def run_random_baseline(embeddings, df, breakeven_sl=False, be_trigger_mult=1.2,
             'win_rate': m.get('Win Rate (%)', 0.0),
             'pf': m.get('Profit Factor', 0.0),
             'exp_r': exp_r,
-            'costs': env.total_Friction_costs_usd
+            'costs': env.total_friction
         })
 
     df_m = pd.DataFrame(seed_metrics)

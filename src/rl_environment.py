@@ -33,7 +33,7 @@ class TradingRLEnv(gym.Env):
                  volatility_filter=True,
                  min_atr_ratio=0.70,
                  max_atr_ratio=2.50,
-                 breakeven_sl=True,
+                 breakeven_sl=False,
                  be_trigger_mult=1.2,
                  use_ev_gate=False,
                  min_ev_r=0.0,
@@ -69,12 +69,14 @@ class TradingRLEnv(gym.Env):
         self.low_prices = self.df['Low'].values if 'Low' in self.df.columns else self.close_prices
         self.atr_values = self.df['ATR'].values if 'ATR' in self.df.columns else self.close_prices * 0.005
         self.dist_sma_50 = self.df['Dist_SMA_50'].values if 'Dist_SMA_50' in self.df.columns else None
+        self.dist_sma_50_4h = self.df['Dist_SMA_50_4H'].values if 'Dist_SMA_50_4H' in self.df.columns else None
+        self.dist_sma_50_1d = self.df['Dist_SMA_50_1D'].values if 'Dist_SMA_50_1D' in self.df.columns else None
         self.atr_ratio = self.df['ATR_Ratio'].values if 'ATR_Ratio' in self.df.columns else None
         self.rsi = self.df['RSI'].values if 'RSI' in self.df.columns else None
         
         # Extract probabilities if available
         # `probabilities`    -> prior-corrected (0.50 == base rate) values for obs + confidence/edge gating.
-        # `ev_probabilities` -> TRUE calibrated P(TP hit) values for EV-in-R gating (falls back to `probabilities`).
+        # `ev_probabilities` -> prior-neutralized (0.40 == base rate) P(TP hit) values for EV-in-R gating.
         if probabilities is not None and len(probabilities) > 0:
             self.prob_long = probabilities[:, 0]
             self.prob_short = probabilities[:, 1]
@@ -102,9 +104,9 @@ class TradingRLEnv(gym.Env):
         # Continuous Action Space [-1.0, 1.0] for dynamic risk sizing
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
         
-        # Observation: emb_size + 1 (local_ratio) + 15 (last 5 trades) + 2 (direction, unrealized) + 5 (probs + regimes) = emb_size + 23
-        emb_size = embeddings.shape[1] if len(embeddings) > 0 else 256
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(emb_size + 23,), dtype=np.float32)
+        # Observation: emb_size + 1 (local_ratio) + 15 (last 5 trades) + 2 (direction, unrealized) + 8 (scaled probs/edge + MTF regimes) = emb_size + 26
+        emb_size = embeddings.shape[1] if len(embeddings) > 0 else 16
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(emb_size + 26,), dtype=np.float32)
         
         self.reset()
         
@@ -232,10 +234,15 @@ class TradingRLEnv(gym.Env):
         # Scale up unrealized return for network visibility
         unrealized_return *= 100.0
         
-        # Probabilities & Market Regimes
+        # Probabilities & Multi-Timeframe Market Regimes (scaled to O(1) for MlpPolicy visibility)
         p_long = float(self.prob_long[self.current_step]) if self.prob_long is not None else 0.5
         p_short = float(self.prob_short[self.current_step]) if self.prob_short is not None else 0.5
+        p_long_scaled = (p_long - 0.50) * 25.0
+        p_short_scaled = (p_short - 0.50) * 25.0
+        p_edge_scaled = (p_long - p_short) * 25.0
         macro_dist = float(self.dist_sma_50[self.current_step]) if self.dist_sma_50 is not None else 0.0
+        macro_dist_4h = float(self.dist_sma_50_4h[self.current_step]) if self.dist_sma_50_4h is not None else macro_dist
+        macro_dist_1d = float(self.dist_sma_50_1d[self.current_step]) if self.dist_sma_50_1d is not None else macro_dist
         atr_ratio = float(self.atr_ratio[self.current_step]) if self.atr_ratio is not None else 1.0
         rsi_val = float((self.rsi[self.current_step] - 50.0) / 50.0) if self.rsi is not None else 0.0
             
@@ -244,7 +251,7 @@ class TradingRLEnv(gym.Env):
             [local_ratio], 
             hist, 
             [current_direction, unrealized_return],
-            [p_long, p_short, macro_dist, atr_ratio, rsi_val]
+            [p_long_scaled, p_short_scaled, p_edge_scaled, macro_dist, macro_dist_4h, macro_dist_1d, atr_ratio, rsi_val]
         ]).astype(np.float32)
         obs = np.nan_to_num(obs, nan=0.0, posinf=1.0, neginf=-1.0)
         return obs
@@ -495,14 +502,18 @@ class TradingRLEnv(gym.Env):
                 # Check 1: Cooldown lockout against revenge trading in the same direction
                 is_cooled_down = (self.cooldown_remaining == 0) or (desired_direction != self.last_sl_direction)
                 
-                # Check 2: Macro Trend Filter (SMA-50 alignment)
+                # Check 2: Multi-Timeframe Macro Trend Filter (1H + 4H + 1D SMA-50 alignment)
                 trend_confirmed = True
                 if self.trend_filter and self.dist_sma_50 is not None:
-                    macro_dist = self.dist_sma_50[self.current_step]
-                    if desired_direction > 0 and macro_dist < -0.5:
-                        trend_confirmed = False  # Avoid longs in strong macro downtrend
-                    elif desired_direction < 0 and macro_dist > 0.5:
-                        trend_confirmed = False  # Avoid shorts in strong macro uptrend
+                    macro_dist = float(self.dist_sma_50[self.current_step])
+                    macro_4h = float(self.dist_sma_50_4h[self.current_step]) if self.dist_sma_50_4h is not None else 0.0
+                    macro_1d = float(self.dist_sma_50_1d[self.current_step]) if self.dist_sma_50_1d is not None else 0.0
+                    if desired_direction > 0:
+                        if macro_dist < -0.5 or macro_1d < -0.75 or (macro_1d < -0.25 and macro_4h < -0.25):
+                            trend_confirmed = False  # Avoid longs in 1H/4H/1D macro downtrends
+                    elif desired_direction < 0:
+                        if macro_dist > 0.5 or macro_1d > 0.75 or (macro_1d > 0.25 and macro_4h > 0.25):
+                            trend_confirmed = False  # Avoid shorts in 1H/4H/1D macro uptrends
                 
                 # Check 3: Backbone Probability Gate & Expected Value (EV) Gate
                 prob_confirmed = True
@@ -515,20 +526,21 @@ class TradingRLEnv(gym.Env):
                     ev_p_s = float(self.ev_prob_short[self.current_step]) if self.ev_prob_short is not None else p_s
                     ev_long = ev_p_l * self.long_tp_mult - (1.0 - ev_p_l) * self.long_sl_mult - cost_in_r
                     ev_short = ev_p_s * self.short_tp_mult - (1.0 - ev_p_s) * self.short_sl_mult - cost_in_r
+                    min_own_conf = max(self.min_confidence, 0.50 + 0.35 * self.min_edge)
 
                     if desired_direction > 0:
                         if self.use_ev_gate:
-                            if ev_long < self.min_ev_r:
+                            if ev_long < self.min_ev_r or p_l < self.min_confidence or p_l <= p_s:
                                 prob_confirmed = False
                         else:
-                            if p_l < self.min_confidence or (p_l - p_s) < self.min_edge:
+                            if p_l < min_own_conf or (p_l - p_s) < self.min_edge:
                                 prob_confirmed = False
                     elif desired_direction < 0:
                         if self.use_ev_gate:
-                            if ev_short < self.min_ev_r:
+                            if ev_short < self.min_ev_r or p_s < self.min_confidence or p_s <= p_l:
                                 prob_confirmed = False
                         else:
-                            if p_s < self.min_confidence or (p_s - p_l) < self.min_edge:
+                            if p_s < min_own_conf or (p_s - p_l) < self.min_edge:
                                 prob_confirmed = False
                 
                 # Check 4: Volatility Regime Filter (avoid dead zones and volatile blowouts)

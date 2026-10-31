@@ -289,6 +289,13 @@ def main():
         print("Embeddings & probabilities successfully cached to disk!")
 
     # Evaluate Backbone Probability Distribution & Empirical Edge Calibration
+    if train_embeddings.shape[1] > 16:
+        from sklearn.decomposition import PCA
+        pca = PCA(n_components=16, random_state=42)
+        train_embeddings = pca.fit_transform(train_embeddings).astype(np.float32)
+        val_embeddings = pca.transform(val_embeddings).astype(np.float32)
+        test_embeddings = pca.transform(test_embeddings).astype(np.float32)
+        print(f"  [PCA COMPRESSION] Compressed backbone embeddings to 16-d (Explained Variance: {pca.explained_variance_ratio_.sum()*100:.1f}%)")
     evaluate_probability_calibration(val_df_aligned, val_probabilities, split_name="Validation Split (Balanced Probs)"); evaluate_probability_calibration(test_df_aligned, test_probabilities, split_name="Held-Out Test Split (Balanced Probs)")
     print(f"  [TRUE CALIBRATED P(TP)] Test mean p_long: {np.mean(test_ev_probabilities[:, 0]):.4f} | "
           f"mean p_short: {np.mean(test_ev_probabilities[:, 1]):.4f} | "
@@ -328,7 +335,7 @@ def main():
         min_edge=0.01,
         use_ev_gate=False,  # EV gate uses TRUE calibrated probs; enable once P(TP) > 0.40 coverage is validated
         min_ev_r=0.0,
-        breakeven_sl=True,
+        breakeven_sl=False,
         be_trigger_mult=1.2,
         volatility_filter=True,
         reward_mode="net_rr",
@@ -350,7 +357,7 @@ def main():
         min_edge=0.01,
         use_ev_gate=False,  # EV gate uses TRUE calibrated probs; enable once P(TP) > 0.40 coverage is validated
         min_ev_r=0.0,
-        breakeven_sl=True,
+        breakeven_sl=False,
         be_trigger_mult=1.2,
         volatility_filter=True,
         reward_mode="net_rr",
@@ -415,7 +422,7 @@ def main():
         min_edge=0.01,
         use_ev_gate=False,  # EV gate uses TRUE calibrated probs; enable once P(TP) > 0.40 coverage is validated
         min_ev_r=0.0,
-        breakeven_sl=True,
+        breakeven_sl=False,
         be_trigger_mult=1.2,
         volatility_filter=True,
         reward_mode="net_rr",
